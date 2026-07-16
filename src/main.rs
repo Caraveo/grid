@@ -10,21 +10,20 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use grid::banner;
 use grid::config::{NodeClass, NodeConfig};
 use grid::coord::{run_coordinator, CoordinatorClient};
 use grid::earn::EarnLedger;
 use grid::executor::execute;
-use grid::protocol::JobKind;
 use grid::node::run_node;
+use grid::protocol::JobKind;
 use grid::resources;
 use grid::tsl::TransactSecurityLayer;
 
 #[derive(Parser)]
 #[command(name = "grid")]
-#[command(
-    about = "GRID Phase 1 — useful mining (Bitcoin = Transact Security Layer)",
-    long_about = None
-)]
+#[command(about = "GRID Phase 1 — useful mining (Bitcoin = Transact Security Layer)")]
+#[command(after_help = banner::BANNER)]
 #[command(author, version)]
 struct Cli {
     #[arg(long, global = true, env = "GRID_CONFIG_DIR")]
@@ -150,6 +149,8 @@ async fn main() -> Result<()> {
         }
 
         Commands::Coord { bind } => {
+            banner::print_banner();
+            println!();
             run_coordinator(&bind).await?;
         }
 
@@ -160,11 +161,15 @@ async fn main() -> Result<()> {
             gpu,
             poll_ms,
         } => {
+            banner::print_mark();
+            println!();
             let cfg = load_cfg(&config_dir, coordinator, id, class, gpu, poll_ms)?;
             run_node(cfg).await?;
         }
 
         Commands::Start { coordinator } => {
+            banner::print_mark();
+            println!();
             let cfg = load_cfg(&config_dir, coordinator, None, None, None, None)?;
             run_node(cfg).await?;
         }
@@ -198,6 +203,8 @@ async fn main() -> Result<()> {
         }
 
         Commands::Status => {
+            banner::print_banner();
+            println!();
             println!("GRID v{}  ·  Phase 1", env!("CARGO_PKG_VERSION"));
             println!("{}", TransactSecurityLayer::default().describe());
             let path = NodeConfig::path_in(&config_dir);

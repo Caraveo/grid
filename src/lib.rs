@@ -4,6 +4,7 @@
 //! Work (PoR jobs) → Utility (GRID earn ledger) → Exit (BTC TSL)
 //! ```
 
+pub mod banner;
 pub mod config;
 pub mod coord;
 pub mod crypto;

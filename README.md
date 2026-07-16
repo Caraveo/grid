@@ -1,11 +1,28 @@
-![GRID](./GRID.jpg)
+<p align="center">
+  <img src="./logo.svg" alt="GRID" width="72" height="72" />
+</p>
 
-# GRID
+<h1 align="center">GRID</h1>
 
-**Useful mining** for a planetary compute network.  
-Run a node. Do real work. Earn **GRID**. Cash out toward **Bitcoin**.
+<p align="center">
+  <strong>Useful mining</strong> for a planetary compute network.<br/>
+  Run a node. Do real work. Earn <strong>GRID</strong>. Cash out toward <strong>Bitcoin</strong>.
+</p>
 
-**Bitcoin is the Transact Security Layer** — GRID meters compute; BTC secures value.
+<p align="center">
+  <em>Bitcoin is the Transact Security Layer</em> — GRID meters compute; BTC secures value.
+</p>
+
+```
+      /\
+     /  \
+    / ## \     G R I D
+    \    /     useful mining
+     \  /      bitcoin · TSL
+      \/
+```
+
+Mark: diamond outline + solid center square — same as [`logo.svg`](./logo.svg) on the site.
 
 > **Mainnet path only.** There is **no public testnet economy**.  
 > Software can be staged privately; the token economy is **Genesis Earn → open utility** on mainnet rails (see [technical.md](./technical.md) and the [token specification](./GRID_Token_Specification.md)).
