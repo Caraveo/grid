@@ -58,25 +58,51 @@ Requires [Rust](https://rustup.rs) (stable) and a C toolchain.
 
 ---
 
-## Quick start (three terminals)
+## Quick start
+
+### Jobs (coord + node)
 
 ```bash
-# 1) Coordinator
+# terminal 1
 grid coord
 
-# 2) Miner
+# terminal 2
 grid init --name garage --class S   # once
 grid node
 
-# 3) Job
+# terminal 3
 grid submit --job echo --payload "hello-grid" --wait
 grid stats
 ```
+
+### Benchmark this machine
+
+```bash
+grid bench
+grid bench --duration 5
+grid bench --json
+```
+
+### P2P mesh (minimal TCP)
+
+Two peers on one machine:
+
+```bash
+# terminal A
+grid peer --listen 127.0.0.1:9900 --with-bench
+
+# terminal B
+grid peer --listen 127.0.0.1:9901 --connect 127.0.0.1:9900 --with-bench
+```
+
+You should see **hello**, **pong rtt=… ms**, and a **peers** list. Gossip shares listen addresses so the mesh can grow.
 
 | Command | What |
 |---------|------|
 | `grid coord` | Job coordinator |
 | `grid node` | Miner — claim work, earn |
+| `grid peer` | **P2P** listen/dial, hello, ping RTT, peer gossip |
+| `grid bench` | **Benchmark** CPU hash + memory throughput |
 | `grid init` | Write `~/.grid/config.toml` |
 | `grid submit` | Submit allowlisted job (`echo`, `hash_file`) |
 | `grid stats` | Jobs + nodes |
@@ -89,18 +115,18 @@ grid stats
 
 ## What Phase 1 is
 
-**In**
+**In (minimal MVP)**
 
-- Single **Rust** `grid` binary (coord + node + submit)  
-- Allowlisted jobs, verify-by-recompute  
-- PoR-weighted earn, whale γ, little-miner inclusion  
-- Class **S / M / L** (home → rack → datacenter)  
-- Bitcoin documented as **Transact Security Layer**
+- Single **Rust** `grid` binary  
+- Jobs: `coord` + `node` + `submit` (verify + PoR earn)  
+- **`grid bench`** — hash + memory scores  
+- **`grid peer`** — TCP P2P hello / ping RTT / peer gossip  
+- Class **S / M / L**, Bitcoin as **Transact Security Layer**
 
 **Later**
 
 - Docker / GPU kernels, Genesis Earn locks on-rail  
-- P2P mesh, critical-latency / gaming fabric  
+- libp2p / NAT traversal, critical-latency fabric  
 - **Edge wallets** (below)
 
 ---

@@ -5,12 +5,14 @@
 //! ```
 
 pub mod banner;
+pub mod bench;
 pub mod config;
 pub mod coord;
 pub mod crypto;
 pub mod earn;
 pub mod executor;
 pub mod node;
+pub mod p2p;
 pub mod por;
 pub mod protocol;
 pub mod resources;

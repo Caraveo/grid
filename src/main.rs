@@ -10,12 +10,16 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use std::time::Duration;
+
 use grid::banner;
+use grid::bench;
 use grid::config::{NodeClass, NodeConfig};
 use grid::coord::{run_coordinator, CoordinatorClient};
 use grid::earn::EarnLedger;
 use grid::executor::execute;
 use grid::node::run_node;
+use grid::p2p::{run_peer, PeerOptions};
 use grid::protocol::JobKind;
 use grid::resources;
 use grid::tsl::TransactSecurityLayer;
@@ -97,6 +101,35 @@ enum Commands {
 
     /// Host resource sample
     Resources,
+
+    /// Benchmark this machine (CPU hash + memory)
+    Bench {
+        /// Seconds to run the hash stress (default 3)
+        #[arg(long, default_value = "3")]
+        duration: u64,
+        /// Emit JSON instead of human text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Join the minimal TCP P2P mesh (hello, ping RTT, peer gossip)
+    Peer {
+        /// Listen address host:port
+        #[arg(long, default_value = "127.0.0.1:9900")]
+        listen: String,
+        /// Dial these peers (repeatable)
+        #[arg(long = "connect")]
+        connect: Vec<String>,
+        /// Optional: run bench first and advertise score in hello
+        #[arg(long)]
+        with_bench: bool,
+        #[arg(long, env = "GRID_NODE_ID")]
+        id: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, default_value = "S")]
+        class: String,
+    },
 
     /// Wallet stub + Bitcoin TSL reminder
     Wallet,
@@ -225,6 +258,59 @@ async fn main() -> Result<()> {
         }
 
         Commands::Resources => resources::print_summary()?,
+
+        Commands::Bench { duration, json } => {
+            banner::print_mark();
+            println!();
+            println!("Running benchmark ({duration}s)…");
+            let report = bench::run(Duration::from_secs(duration.max(1)))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                bench::print_report(&report);
+            }
+        }
+
+        Commands::Peer {
+            listen,
+            connect,
+            with_bench,
+            id,
+            name,
+            class,
+        } => {
+            banner::print_mark();
+            println!();
+            let path = NodeConfig::path_in(&config_dir);
+            let (node_id, node_name) = if path.exists() {
+                let c = NodeConfig::load(&path)?;
+                (id.unwrap_or(c.node_id), name.unwrap_or(c.name))
+            } else {
+                (
+                    id.unwrap_or_else(|| {
+                        format!("node_{}", &uuid::Uuid::new_v4().to_string()[..8])
+                    }),
+                    name.unwrap_or_else(|| "peer".into()),
+                )
+            };
+            let score = if with_bench {
+                println!("Quick bench for hello score…");
+                let r = bench::run(Duration::from_secs(2))?;
+                println!("  score={:.1}\n", r.score);
+                r.score
+            } else {
+                0.0
+            };
+            let opts = PeerOptions {
+                node_id,
+                name: node_name,
+                class,
+                listen,
+                connect,
+                score,
+            };
+            run_peer(opts).await?;
+        }
 
         Commands::Wallet => {
             let tsl = TransactSecurityLayer::default();
