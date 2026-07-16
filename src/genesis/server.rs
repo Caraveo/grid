@@ -9,15 +9,19 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use parking_lot::Mutex;
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
 use super::store::GenesisStore;
 use super::truth::TrackedPeer;
 
+/// Server always re-opens store from disk so CLI track/ban is visible immediately.
 struct App {
-    store: Mutex<GenesisStore>,
+    config_dir: PathBuf,
+}
+
+fn open_store(dir: &PathBuf) -> Result<GenesisStore, StatusCode> {
+    GenesisStore::open(dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub async fn run_genesis_server(config_dir: PathBuf, bind: &str) -> Result<()> {
@@ -26,7 +30,7 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str) -> Result<()> {
     let epoch = store.epoch();
 
     let app_state = Arc::new(App {
-        store: Mutex::new(store),
+        config_dir: config_dir.clone(),
     });
 
     let app = Router::new()
@@ -47,7 +51,7 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str) -> Result<()> {
     println!("  scope    track peers + ban peers ONLY");
     println!("  security secret key never leaves this host; no remote ban API");
     println!();
-    println!("  GET  /v1/truth   signed snapshot");
+    println!("  GET  /v1/truth   signed snapshot (reloads from disk each request)");
     println!("  GET  /v1/pubkey  genesis public key");
     println!("  POST /v1/announce  peer self-report (not trusted for bans)");
     println!();
@@ -57,9 +61,9 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str) -> Result<()> {
     Ok(())
 }
 
-async fn health(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
-    let s = app.store.lock();
-    Json(serde_json::json!({
+async fn health(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let s = open_store(&app.config_dir)?;
+    Ok(Json(serde_json::json!({
         "ok": true,
         "role": "genesis",
         "phase": 0,
@@ -68,20 +72,20 @@ async fn health(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
         "banned": s.list_banned().len(),
         "tsl": "bitcoin",
         "authority": ["track_peers", "ban_peers"],
-    }))
+    })))
 }
 
-async fn pubkey_handler(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
-    let s = app.store.lock();
-    Json(serde_json::json!({
+async fn pubkey_handler(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let s = open_store(&app.config_dir)?;
+    Ok(Json(serde_json::json!({
         "genesis_pubkey": s.keys().public_hex(),
-    }))
+    })))
 }
 
 async fn truth_handler(
     State(app): State<Arc<App>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = app.store.lock();
+    let s = open_store(&app.config_dir)?;
     let snap = s.snapshot().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::to_value(snap).unwrap()))
 }
