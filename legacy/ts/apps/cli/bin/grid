@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+/**
+ * `grid` binary — GRID useful mining CLI.
+ * Usage: grid node | grid submit | grid stats
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = join(__dirname, "..");
+const mainJs = join(root, "dist", "main.js");
+const mainTs = join(root, "src", "main.ts");
+const tsxCli = join(root, "node_modules", "tsx", "dist", "cli.mjs");
+
+if (existsSync(mainJs)) {
+  await import(pathToFileURL(mainJs).href);
+} else if (existsSync(tsxCli)) {
+  const result = spawnSync(process.execPath, [tsxCli, mainTs, ...process.argv.slice(2)], {
+    stdio: "inherit",
+    env: process.env,
+  });
+  process.exit(result.status ?? 1);
+} else {
+  console.error("grid: run `npm install` in apps/cli first (tsx missing).");
+  process.exit(1);
+}

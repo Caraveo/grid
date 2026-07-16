@@ -1,0 +1,12 @@
+# Local demo wiring — coordinator only for now (node runs on host GPU later).
+services:
+  coordinator:
+    image: node:22-bookworm
+    working_dir: /app
+    volumes:
+      - ../apps/coordinator:/app
+    command: bash -lc "npm install && npm run dev"
+    ports:
+      - "8787:8787"
+    environment:
+      GRID_PORT: "8787"

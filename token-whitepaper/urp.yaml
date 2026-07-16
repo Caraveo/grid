@@ -1,0 +1,71 @@
+urp: "0.1"
+paper:
+  id: "urp:grid:token-spec:1.0"
+  title: "GRID Token Specification"
+  subtitle: "Proof-of-Resource Economy, Marketplace Settlement, and Growth Design"
+  type: "white-paper"
+  language: "en-US"
+  version: "1.5.0"
+  created: "2026-07-16"
+  updated: "2026-07-16"
+  status: "draft"
+authors:
+  - name: "Jon Caraveo"
+    affiliation: "GRID Network"
+    roles:
+      - "author"
+    orcid: "0000-0002-1825-0097"
+license:
+  text: "CC-BY-4.0"
+  code: "MIT"
+  data: "CC-BY-4.0"
+document:
+  source: "paper.rd"
+  bibliography: ""
+  citation_style: "ieee"
+  number_sections: true
+  number_figures: true
+  number_equations: true
+reproducibility:
+  level: "0"
+  environment: ""
+  entrypoint: ""
+  expected_runtime: ""
+keywords:
+  - "GRID"
+  - "Proof-of-Resource"
+  - "tokenomics"
+  - "distributed compute"
+  - "marketplace"
+  - "utility token"
+revisionHistory:
+  - version: "1.0.0"
+    date: "2026-07-16"
+    changes:
+      - "Initial token specification draft grounded in GRID white paper Chapter 8"
+  - version: "1.1.0"
+    date: "2026-07-16"
+    changes:
+      - "Miner hardware continuity for ETH/BTC-era GPU operators"
+      - "Datacenter + little-miner coexistence: inclusion pool, sharding, anti-monopoly caps"
+  - version: "1.2.0"
+    date: "2026-07-16"
+    changes:
+      - "Critical-latency future use cases (competitive P2P gaming, edge premium)"
+      - "A Letter to Miners published separately as letter.md"
+  - version: "1.3.0"
+    date: "2026-07-16"
+    changes:
+      - "Emission safety, hyperscaler ceilings, Genesis Earn Year (earn-under-lock)"
+  - version: "1.4.0"
+    date: "2026-07-16"
+    changes:
+      - "Implementation phasing + buildability one-liner; see technical.md"
+  - version: "1.5.0"
+    date: "2026-07-16"
+    changes:
+      - "Bitcoin as Transact Security Layer (TSL); GRID meters compute, BTC secures value"
+funding: []
+conflicts:
+  declared: true
+  statement: "Author is affiliated with GRID Network. This document is a design specification; parameters are assumptions pending implementation and legal review."

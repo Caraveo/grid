@@ -1,0 +1,11 @@
+/target/
+**/*.rs.bk
+.DS_Store
+.env
+node_modules/
+**/node_modules/
+legacy/ts/**/node_modules/
+legacy/ts/**/dist/
+*.log
+.idea/
+.vscode/
