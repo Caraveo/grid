@@ -13,20 +13,6 @@
   <em>Bitcoin is the Transact Security Layer</em> — GRID meters compute; BTC secures value.
 </p>
 
-```
-      /\
-     /  \
-    / ## \     G R I D
-    \    /     useful mining
-     \  /      bitcoin · TSL
-      \/
-```
-
-Mark: diamond outline + solid center square — same as [`logo.svg`](./logo.svg) on the site.
-
-> **Mainnet path only.** There is **no public testnet economy**.  
-> Software can be staged privately; the token economy is **Genesis Earn → open utility** on mainnet rails (see [technical.md](./technical.md) and the [token specification](./GRID_Token_Specification.md)).
-
 ---
 
 ## Install
