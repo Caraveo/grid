@@ -68,12 +68,20 @@ pub fn verify_truth(truth: &SignedTruth, expected_pubkey_hex: Option<&str>) -> R
     Ok(())
 }
 
+/// True if `peer_id` appears on the signed ban list (one-shot check).
+/// Live mesh uses an in-memory map after truth refresh; this helper is for
+/// operators and tests.
 pub fn is_banned(truth: &SignedTruth, peer_id: &str) -> bool {
     truth
         .body
         .banned
         .iter()
         .any(|b| b.peer_id == peer_id)
+}
+
+/// Count of currently banned peer ids in a verified snapshot.
+pub fn ban_count(truth: &SignedTruth) -> usize {
+    truth.body.banned.len()
 }
 
 #[cfg(test)]

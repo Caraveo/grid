@@ -83,31 +83,55 @@ grid bench --duration 5
 grid bench --json
 ```
 
-### Genesis (you = source of truth for track + ban)
+### Public globe ping (opt-in, location only)
+
+Shows your node on [grid-site-ochre.vercel.app/#nodes](https://grid-site-ochre.vercel.app/#nodes).  
+**Never sends IPs, ports, or endpoints** — only `nodeId`, label, class, region, lat/lng.
 
 ```bash
-# On YOUR secure machine (genesis)
+# ~/.grid/config.toml  (or env GRID_GLOBE_LAT / GRID_GLOBE_LNG)
+# [node]
+# globe_lat = 37.7
+# globe_lng = -122.4
+# globe_region = "NA-W"
+
+export GRID_SITE_URL=https://grid-site-ochre.vercel.app
+export GRID_WEBHOOK_SECRET=...   # from GSITE / Vercel env
+export GRID_GLOBE_LAT=37.7
+export GRID_GLOBE_LNG=-122.4
+
+grid node   # pings on start + every ~5m after heartbeat
+```
+
+Skip coords → mining continues; globe ping is skipped.
+
+### Auth (protect operator keys)
+
+```bash
+grid auth                 # default = passkey
+grid auth passkey
+grid auth password
+grid auth keyphrase       # 24-word BIP39 phrase
+grid auth combo           # password → passkey → keyphrase
+grid auth master          # password + 24 words + master key (DESTROYED on node)
+grid auth nocrypt         # plain keys only (0600)
+grid auth login
+grid auth status
+grid auth delete --wipe-keys
+```
+
+Secrets live under `~/.grid/keys/` and `~/.grid/passkey/` — gitignored. Never commit them.
+
+**Master mode:** the randomized master key is shown once, then wiped from the node.
+Unlock requires password + 24 words + master key file. One factor alone unlocks nothing.
+
+### Genesis registry
+
+```bash
 grid genesis init
 grid genesis serve --bind 127.0.0.1:9100
-
-# Track / ban (local secret key only — no remote ban API)
 grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
-grid genesis ban --id evil-9 --reason "abuse"
-grid genesis list
 ```
-
-Peers enforce your signed ban list:
-
-```bash
-export GRID_GENESIS=http://127.0.0.1:9100
-export GRID_GENESIS_PUBKEY=$(grid genesis pubkey)
-
-grid peer --listen 127.0.0.1:9900 \
-  --genesis "$GRID_GENESIS" \
-  --genesis-pubkey "$GRID_GENESIS_PUBKEY"
-```
-
-See [docs/GENESIS.md](./docs/GENESIS.md) for the security model.
 
 ### P2P mesh (minimal TCP)
 
@@ -126,14 +150,14 @@ You should see **hello**, **pong rtt=… ms**, and a **peers** list.
 | `grid coord` | Job coordinator |
 | `grid node` | Miner — claim work, earn |
 | `grid peer` | **P2P** listen/dial, hello, ping RTT, peer gossip |
-| `grid genesis` | **Phase 0 authority** — track peers + ban peers (signed truth) |
+| `grid auth` | Protect operator keys (passkey / password / 24-word / master / nocrypt) |
+| `grid genesis` | Phase 0 peer registry + signed truth |
 | `grid bench` | **Benchmark** CPU hash + memory throughput |
 | `grid init` | Write `~/.grid/config.toml` |
 | `grid submit` | Submit allowlisted job (`echo`, `hash_file`) |
 | `grid stats` | Jobs + nodes |
 | `grid status` | Config + host metrics + Bitcoin TSL |
 | `grid wallet` | Balance stub + GRID → BTC exit reminder |
-| `grid test` | Offline executor smoke test |
 | `grid resources` | CPU / memory sample |
 
 ---

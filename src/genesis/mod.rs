@@ -20,4 +20,6 @@ mod truth;
 pub use keys::{export_pubkey_hex, generate_keypair, load_keypair, GenesisKeys};
 pub use server::run_genesis_server;
 pub use store::{fetch_truth, GenesisStore};
-pub use truth::{verify_truth, BanRecord, SignedTruth, TrackedPeer};
+pub use truth::{
+    ban_count, is_banned, verify_truth, BanRecord, SignedTruth, TrackedPeer,
+};

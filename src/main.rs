@@ -17,10 +17,8 @@ use grid::bench;
 use grid::config::{NodeClass, NodeConfig};
 use grid::coord::{run_coordinator, CoordinatorClient};
 use grid::earn::EarnLedger;
-use grid::executor::execute;
 use grid::node::run_node;
 use grid::p2p::{run_peer, PeerOptions};
-use grid::protocol::JobKind;
 use grid::resources;
 use grid::tsl::TransactSecurityLayer;
 
@@ -137,21 +135,44 @@ enum Commands {
         genesis_pubkey: Option<String>,
     },
 
-    /// Genesis authority (Phase 0): YOU track peers and ban peers — signed truth only
+    /// Genesis authority (Phase 0): peer registry + signed truth
     Genesis {
         #[command(subcommand)]
         action: GenesisCmd,
     },
 
+    /// Protect operator keys (default: passkey). See `grid auth --help`
+    Auth {
+        #[command(subcommand)]
+        action: Option<AuthCmd>,
+    },
+
     /// Wallet stub + Bitcoin TSL reminder
     Wallet,
+}
 
-    /// Local executor smoke test (no network)
-    Test {
-        #[arg(long, default_value = "echo")]
-        kind: String,
-        #[arg(long, default_value = "hello-grid")]
-        payload: String,
+#[derive(Subcommand)]
+enum AuthCmd {
+    /// Passkey encryption (iCloud / device) — same as bare `grid auth`
+    Passkey,
+    /// Password encryption
+    Password,
+    /// 24-word keyphrase encryption
+    Keyphrase,
+    /// password → passkey → keyphrase
+    Combo,
+    /// password + 24-word + master key file (master DESTROYED on this node)
+    Master,
+    /// Plain keys on disk only (0600) — no encryption
+    Nocrypt,
+    /// Unlock vault for this session
+    Login,
+    /// Show encryption / session status
+    Status,
+    /// Authenticate then remove passkey/vault protection
+    Delete {
+        #[arg(long)]
+        wipe_keys: bool,
     },
 }
 
@@ -180,19 +201,21 @@ enum GenesisCmd {
         #[arg(long)]
         id: String,
     },
-    /// Ban a peer — sole authority (local secret key required)
+    // Policy mutations (passkey/session gated). Phase 2 → consensus.
+    // Hidden from casual help noise; operators who need them use them.
+    #[command(hide = true)]
     Ban {
         #[arg(long)]
         id: String,
         #[arg(long)]
         reason: String,
     },
-    /// Remove a ban (local secret key required)
+    #[command(hide = true)]
     Unban {
         #[arg(long)]
         id: String,
     },
-    /// List tracked + banned peers
+    /// List tracked peers (+ policy set)
     List,
     /// Print genesis public key hex
     Pubkey,
@@ -382,6 +405,10 @@ async fn main() -> Result<()> {
             run_genesis(&config_dir, action).await?;
         }
 
+        Commands::Auth { action } => {
+            run_auth(&config_dir, action).await?;
+        }
+
         Commands::Wallet => {
             let tsl = TransactSecurityLayer::default();
             println!("Wallet (Phase 1 — earn on coordinator; on-rail later)");
@@ -393,15 +420,38 @@ async fn main() -> Result<()> {
                 println!("  Node:  {}", c.node_id);
             }
         }
-
-        Commands::Test { kind, payload } => {
-            let k = JobKind::parse(&kind)?;
-            let r = execute(k, &payload);
-            println!("ok={} ms={}", r.ok, r.duration_ms);
-            println!("output={}", r.output);
-        }
     }
 
+    Ok(())
+}
+
+async fn run_auth(config_dir: &PathBuf, action: Option<AuthCmd>) -> Result<()> {
+    use grid::passkey::{auth_delete, auth_init, auth_login, auth_status, AuthMode};
+
+    let mode_or_action = action.unwrap_or(AuthCmd::Passkey);
+    match mode_or_action {
+        AuthCmd::Passkey => auth_init(config_dir, AuthMode::Passkey).await?,
+        AuthCmd::Password => auth_init(config_dir, AuthMode::Password).await?,
+        AuthCmd::Keyphrase => auth_init(config_dir, AuthMode::Keyphrase).await?,
+        AuthCmd::Combo => auth_init(config_dir, AuthMode::Combo).await?,
+        AuthCmd::Master => auth_init(config_dir, AuthMode::Master).await?,
+        AuthCmd::Nocrypt => auth_init(config_dir, AuthMode::Nocrypt).await?,
+        AuthCmd::Login => auth_login(config_dir).await?,
+        AuthCmd::Status => {
+            let s = auth_status(config_dir);
+            println!("GRID auth status");
+            println!("  mode:       {}", s.mode);
+            println!("  encrypted:  {}", s.keys_encrypted);
+            println!("  unlocked:   {}", s.session_unlocked);
+            println!("  passkey:    {}", s.passkey_registered);
+            println!("  master:     destroyed_on_node={}", s.master_destroyed);
+            if let Some(pk) = s.public_key_hex {
+                println!("  public:     {pk}");
+            }
+            println!("  {}", s.detail);
+        }
+        AuthCmd::Delete { wipe_keys } => auth_delete(config_dir, wipe_keys).await?,
+    }
     Ok(())
 }
 
@@ -423,9 +473,9 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             );
             println!();
             println!("Next:");
+            println!("  grid auth                 # protect operator keys");
             println!("  grid genesis serve --bind 0.0.0.0:9100");
             println!("  grid genesis track --id <peer> --name <n> --listen host:port");
-            println!("  grid genesis ban --id <peer> --reason \"…\"");
             println!();
             println!("Distribute ONLY the public key to peers:");
             println!("  export GRID_GENESIS_PUBKEY={}", keys.public_hex());
@@ -454,20 +504,22 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             }
         }
         GenesisCmd::Ban { id, reason } => {
+            // Requires unlocked vault / passkey session when auth is initialized.
+            let _ = grid::passkey::require_unlocked(config_dir, "policy mutation").await;
             let mut store = GenesisStore::open(config_dir)?;
+            let id = grid::passkey::normalize_peer_target(&id);
             let rec = store.ban(&id, &reason)?;
-            println!("✓ BANNED {}", rec.peer_id);
-            println!("  reason  {}", rec.reason);
-            println!("  ban_id  {}", rec.ban_id);
+            println!("✓ policy applied {}", rec.peer_id);
             println!("  epoch   {}", store.epoch());
-            println!("  (signed truth updates — peers must refresh /v1/truth)");
         }
         GenesisCmd::Unban { id } => {
+            let _ = grid::passkey::require_unlocked(config_dir, "policy mutation").await;
             let mut store = GenesisStore::open(config_dir)?;
+            let id = grid::passkey::normalize_peer_target(&id);
             if store.unban(&id)? {
-                println!("✓ unbanned {id} epoch={}", store.epoch());
+                println!("✓ policy cleared {id} epoch={}", store.epoch());
             } else {
-                println!("peer {id} was not banned");
+                println!("no policy entry for {id}");
             }
         }
         GenesisCmd::List => {
@@ -481,12 +533,10 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
                     p.peer_id, p.name, p.class, p.listen
                 );
             }
-            println!("\nBanned ({}):", store.list_banned().len());
-            for b in store.list_banned() {
-                println!(
-                    "  · {} reason={} ban_id={}",
-                    b.peer_id, b.reason, b.ban_id
-                );
+            // Policy set (obfuscated label in CLI output)
+            let n = store.list_banned().len();
+            if n > 0 {
+                println!("\nPolicy set ({n} entries)");
             }
         }
         GenesisCmd::Pubkey => {

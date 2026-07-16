@@ -426,7 +426,7 @@ async fn refresh_truth(
             "[p2p] genesis truth epoch {} → {} ({} bans, {} tracked)",
             s.truth_epoch,
             truth.body.epoch,
-            truth.body.banned.len(),
+            crate::genesis::ban_count(&truth),
             truth.body.tracked.len()
         );
     }
@@ -436,9 +436,8 @@ async fn refresh_truth(
         s.banned.insert(b.peer_id.clone(), b.reason.clone());
     }
     // drop active connections to newly banned peers
-    let banned_ids: HashSet<String> = truth.body.banned.iter().map(|b| b.peer_id.clone()).collect();
     s.peers.retain(|_, p| {
-        if banned_ids.contains(&p.node_id) {
+        if crate::genesis::is_banned(&truth, &p.node_id) {
             println!("[p2p] dropping banned peer {}", p.node_id);
             false
         } else {

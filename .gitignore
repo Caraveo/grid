@@ -2,6 +2,7 @@
 **/*.rs.bk
 .DS_Store
 .env
+.env.*
 node_modules/
 **/node_modules/
 legacy/ts/**/node_modules/
@@ -9,3 +10,29 @@ legacy/ts/**/dist/
 *.log
 .idea/
 .vscode/
+
+# --- NEVER commit operator secrets / vault / passkeys ---
+*.key
+*.enc
+*.wrap
+*.dek
+*.pem
+*.p12
+**/secret.key
+**/seal.key
+**/operator.key
+**/operator.enc
+**/dek.wrap
+**/vault.meta.json
+**/credential.json
+**/unlocked.json
+.keys/
+.passkey/
+.secrets/
+# runtime key material only — do not ignore src/passkey/ (Rust auth module)
+.keys/runtime/
+.secrets/keys/
+session/
+genesis/secret.key
+# local grid home if someone runs from repo
+.grid/

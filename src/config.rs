@@ -58,6 +58,14 @@ pub struct NodeConfig {
     /// Operator identity cluster for whale emission caps (defaults to node_id).
     #[serde(default)]
     pub cluster_id: Option<String>,
+    /// Opt-in public globe pin (WGS84). Omit to disable site mesh pings.
+    #[serde(default)]
+    pub globe_lat: Option<f64>,
+    #[serde(default)]
+    pub globe_lng: Option<f64>,
+    /// Coarse region label for the globe (e.g. NA-W). Not a network endpoint.
+    #[serde(default)]
+    pub globe_region: Option<String>,
 }
 
 fn default_region() -> String {
@@ -130,6 +138,9 @@ impl NodeConfig {
             poll_ms: default_poll_ms(),
             max_concurrent: default_max_concurrent(),
             cluster_id: Some(id),
+            globe_lat: None,
+            globe_lng: None,
+            globe_region: None,
         };
         let path = Self::path_in(dir);
         cfg.save(&path)?;

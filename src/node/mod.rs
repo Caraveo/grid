@@ -1,4 +1,4 @@
-//! Miner loop: heartbeat → claim → execute → complete.
+//! Miner loop: heartbeat → claim → execute → complete (+ optional globe ping).
 
 use anyhow::Result;
 use tracing::{debug, info, warn};
@@ -6,6 +6,7 @@ use tracing::{debug, info, warn};
 use crate::config::NodeConfig;
 use crate::coord::CoordinatorClient;
 use crate::executor::execute;
+use crate::mesh_ping;
 use crate::protocol::{result_commitment, JobKind};
 
 pub async fn run_node(cfg: NodeConfig) -> Result<()> {
@@ -17,6 +18,11 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
     println!("  coordinator  {}", cfg.coordinator);
     println!("  gpu          {}", cfg.gpu_model);
     println!("  cluster      {}", cfg.cluster());
+    if mesh_ping::resolve_coords(&cfg).is_some() {
+        println!("  globe        opt-in coords set (site ping enabled if GRID_SITE_URL)");
+    } else {
+        println!("  globe        off (set globe_lat/lng or GRID_GLOBE_LAT/LNG)");
+    }
     println!("  (Ctrl+C to stop)\n");
 
     match client.health().await {
@@ -25,7 +31,15 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
         Err(e) => warn!("coordinator unreachable ({e}) — will retry"),
     }
 
-    // Heartbeat task
+    // One globe ping on start (fire-and-forget)
+    {
+        let cfg_ping = cfg.clone();
+        tokio::spawn(async move {
+            mesh_ping::ping_globe(&cfg_ping, true).await;
+        });
+    }
+
+    // Heartbeat task + debounced globe ping
     {
         let client = CoordinatorClient::new(&cfg.coordinator);
         let id = cfg.node_id.clone();
@@ -33,15 +47,20 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
         let gpu = cfg.gpu_model.clone();
         let max_c = cfg.max_concurrent;
         let cluster = cfg.cluster().to_string();
+        let cfg_hb = cfg.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
             loop {
                 tick.tick().await;
-                if let Err(e) = client
+                match client
                     .heartbeat(&id, &class, &gpu, max_c, &cluster)
                     .await
                 {
-                    debug!("heartbeat: {e}");
+                    Ok(_) => {
+                        // At most every 5 min (debounce inside mesh_ping)
+                        mesh_ping::ping_globe(&cfg_hb, false).await;
+                    }
+                    Err(e) => debug!("heartbeat: {e}"),
                 }
             }
         });
