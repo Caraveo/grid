@@ -17,44 +17,74 @@
 
 ## Install
 
-### One-liner (`curl`)
+### One-liner (`curl`) — recommended
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
 ```
 
-Force reinstall or always build from source:
+Then open a **new terminal** (or `hash -r`) and verify:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --force
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --from-source
+which grid && grid -V
+grid auth --help      # must list passkey / master / …
 ```
 
-Custom install directory:
+### Reinstall / upgrade / options
 
 ```bash
+# Replace any existing binary (including legacy CLIs also named `grid`)
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --force
+
+# Always cargo-build from git
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --from-source
+
+# Prefer /usr/local/bin (may prompt for sudo)
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --system --force
+
+# Custom directory
 curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --prefix="$HOME/bin"
 ```
 
-The script:
-
-1. Tries a **GitHub Release** prebuilt (`grid-<os>-<arch>`) when available  
-2. Otherwise **clones + `cargo build --release`** and installs to `~/.local/bin`  
-3. Prints next steps for `grid coord` / `grid node`
-
-Ensure `~/.local/bin` is on your `PATH` if it isn’t already.
-
-### From source (manual)
+### From a git clone
 
 ```bash
 git clone https://github.com/Caraveo/grid.git
 cd grid
-cargo build --release
-cp target/release/grid ~/.local/bin/grid   # or /usr/local/bin
-grid --version
+./scripts/install.sh --local --force
+# or
+make install                 # → ~/.local/bin/grid
+make install-system          # → /usr/local/bin/grid
 ```
 
-Requires [Rust](https://rustup.rs) (stable) and a C toolchain.
+### What the installer does
+
+1. Tries a **GitHub Release** prebuilt (`grid-<os>-<arch>`) when available  
+2. Otherwise installs **Rust** (if needed) and **`cargo build --release`**  
+3. Installs to **`~/.local/bin/grid`** by default (or `--prefix` / `--system`)  
+4. **Detects Phase 1** via `grid auth` — refuses/replaces legacy binaries that also used the name `grid`  
+5. Backs up non-Phase-1 copies as `*.legacy.bak`  
+6. Ensures `~/.local/bin` is on **PATH** (appends to `~/.zshrc` / `~/.bashrc` when safe)  
+7. Writes `~/.grid/install-info.txt` and prints next steps  
+
+If `grid auth` is “unrecognized”, you’re still on a **legacy** binary:
+
+```bash
+which -a grid
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --force --system
+hash -r && grid auth --help
+```
+
+### Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --uninstall
+# or from a clone: make uninstall
+```
+
+Leaves `~/.grid/` config and keys alone.
+
+Requires [Rust](https://rustup.rs) only when building from source (the installer can bootstrap rustup).
 
 ---
 
