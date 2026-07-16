@@ -230,6 +230,13 @@ enum GenesisCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load operator env early (before clap reads env= attrs for subcommands that re-parse).
+    // Safe: never overwrites vars already set in the shell.
+    let early_config = std::env::var_os("GRID_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(NodeConfig::default_dir);
+    load_operator_env(&early_config);
+
     let cli = Cli::parse();
 
     let filter = match cli.log_level.to_lowercase().as_str() {
@@ -245,6 +252,8 @@ async fn main() -> Result<()> {
         .init();
 
     let config_dir = cli.config_dir.unwrap_or_else(NodeConfig::default_dir);
+    // Re-load in case --config-dir pointed elsewhere (still no overwrite of shell vars).
+    load_operator_env(&config_dir);
 
     match cli.command {
         Commands::Init {
@@ -554,6 +563,40 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Load `config_dir/env` (and `~/.grid/env` fallback) into process env.
+/// Does not override variables already set in the shell. Never prints secrets.
+fn load_operator_env(config_dir: &std::path::Path) {
+    let candidates = [
+        config_dir.join("env"),
+        NodeConfig::default_dir().join("env"),
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for path in candidates {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
+            let k = k.trim();
+            if k.is_empty() || std::env::var_os(k).is_some() {
+                continue;
+            }
+            let v = v.trim().trim_matches(|c| c == '"' || c == '\'');
+            // SAFETY: single-threaded at startup before workers; sets operator config only.
+            unsafe { std::env::set_var(k, v) };
+        }
+    }
 }
 
 fn load_cfg(

@@ -88,6 +88,17 @@ grid bench --json
 Shows your node on [grid-site-ochre.vercel.app/#nodes](https://grid-site-ochre.vercel.app/#nodes).  
 **Never sends IPs, ports, or endpoints** — only `nodeId`, label, class, region, lat/lng.
 
+**Wire once** (recommended) — create `~/.grid/env` (mode `600`). The CLI loads it automatically on every command; shell exports still win.
+
+```bash
+# ~/.grid/env   (chmod 600)  — never commit this file
+GRID_SITE_URL=https://grid-site-ochre.vercel.app
+GRID_WEBHOOK_SECRET=...          # Vercel → grid-site → GRID_WEBHOOK_SECRET
+GRID_GLOBE_LAT=37.7
+GRID_GLOBE_LNG=-122.4
+GRID_GLOBE_REGION=NA-W
+```
+
 ```bash
 # ~/.grid/config.toml  (or env GRID_GLOBE_LAT / GRID_GLOBE_LNG)
 # [node]
@@ -95,15 +106,10 @@ Shows your node on [grid-site-ochre.vercel.app/#nodes](https://grid-site-ochre.v
 # globe_lng = -122.4
 # globe_region = "NA-W"
 
-export GRID_SITE_URL=https://grid-site-ochre.vercel.app
-export GRID_WEBHOOK_SECRET=...   # from GSITE / Vercel env
-export GRID_GLOBE_LAT=37.7
-export GRID_GLOBE_LNG=-122.4
-
 grid node   # pings on start + every ~5m after heartbeat
 ```
 
-Skip coords → mining continues; globe ping is skipped.
+Skip coords or site URL → mining continues; globe ping is skipped.
 
 ### Auth (protect operator keys)
 
