@@ -161,7 +161,7 @@ enum AuthCmd {
     Keyphrase,
     /// password → passkey → keyphrase
     Combo,
-    /// password + 24-word + master key file (master DESTROYED on this node)
+    /// password + passkey + 24-word + master key (master DESTROYED on this node)
     Master,
     /// Plain keys on disk only (0600) — no encryption
     Nocrypt,

@@ -6,13 +6,13 @@
 //! grid auth password
 //! grid auth keyphrase       # 24-word phrase
 //! grid auth combo           # password → passkey → keyphrase
-//! grid auth master          # password + 24-word + master key (DESTROY on node)
+//! grid auth master          # password + passkey + 24-word + master key (DESTROY)
 //! grid auth nocrypt         # plaintext keys only
 //! grid auth login | status | delete
 //! ```
 //!
-//! Master mode: the randomized master key is shown once and **destroyed** on this
-//! node. Unlock requires every factor — one alone is worthless.
+//! Master mode: password + passkey + 24 words + master key. The master key is
+//! shown once and **destroyed** on this node. Unlock needs every factor.
 //!
 //! Phase 2: ban policy may move to consensus; vault remains local key control.
 

@@ -119,7 +119,7 @@ grid auth passkey
 grid auth password
 grid auth keyphrase       # 24-word BIP39 phrase
 grid auth combo           # password → passkey → keyphrase
-grid auth master          # password + 24 words + master key (DESTROYED on node)
+grid auth master          # password + passkey + 24 words + master key (DESTROYED)
 grid auth nocrypt         # plain keys only (0600)
 grid auth login
 grid auth status
@@ -128,8 +128,9 @@ grid auth delete --wipe-keys
 
 Secrets live under `~/.grid/keys/` and `~/.grid/passkey/` — gitignored. Never commit them.
 
-**Master mode:** the randomized master key is shown once, then wiped from the node.
-Unlock requires password + 24 words + master key file. One factor alone unlocks nothing.
+**Master mode (maximum):** four factors — password + **passkey** + 24-word phrase +
+master key file. The randomized master key is shown once, then wiped from the node
+(`DESTROY`). Unlock needs **all four**. One factor alone unlocks nothing.
 
 ### Genesis registry
 

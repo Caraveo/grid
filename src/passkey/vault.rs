@@ -3,16 +3,17 @@
 //! | Mode | Unlock factors |
 //! |------|----------------|
 //! | **passkey** (default) | iCloud/device WebAuthn passkey |
-//! | **password** | Master password only |
+//! | **password** | password only |
 //! | **keyphrase** | 24-word phrase only |
 //! | **combo** | password → passkey → keyphrase |
-//! | **master** | password + 24-word + master key file (all required) |
+//! | **master** | password + passkey + 24-word + master key file (all required) |
 //! | **nocrypt** | plaintext operator.key (0600) |
 //!
 //! # Master destruction
 //! In `master` mode the random master key is shown **once**, never stored under
-//! `~/.grid/`. After setup it is wiped from memory. Recovering the vault
-//! requires **every** factor. Knowing one secret alone yields nothing useful.
+//! `~/.grid/`. After setup it is wiped from memory (`DESTROY`). Unlock forever
+//! needs **every** factor: password, device passkey, 24-word phrase, and the
+//! off-node master key. One factor alone unlocks nothing.
 //!
 //! Phase 2: policy may move to consensus; this vault stays local key hygiene.
 
@@ -301,7 +302,7 @@ pub async fn auth_init(config_dir: &Path, mode: AuthMode) -> Result<()> {
         AuthMode::Password => init_password(config_dir),
         AuthMode::Keyphrase => init_keyphrase_only(config_dir),
         AuthMode::Combo => init_combo(config_dir).await,
-        AuthMode::Master => init_master(config_dir),
+        AuthMode::Master => init_master(config_dir).await,
     }
 }
 
@@ -444,14 +445,23 @@ async fn init_combo(c: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Master mode: password + 24-word + master key file — all required.
+/// Master mode: password + passkey + 24-word + master key file — all required.
 /// Master key is randomized, displayed once, then **destroyed** on this node.
-fn init_master(c: &Path) -> Result<()> {
-    println!("Mode: MASTER — multi-factor vault\n");
-    println!("You will receive THREE independent secrets.");
-    println!("Knowing only one (or even two) CANNOT unlock the vault.\n");
+/// Passkey is a hard gate on every unlock (device / iCloud WebAuthn).
+async fn init_master(c: &Path) -> Result<()> {
+    println!("Mode: MASTER — four-factor vault\n");
+    println!("Factors (all required to unlock later):");
+    println!("  1. password");
+    println!("  2. passkey  (this device — Face ID / Touch ID / hardware key)");
+    println!("  3. 24-word keyphrase  (paper / offline)");
+    println!("  4. master key file    (USB / offline — DESTROYED on this node)\n");
+    println!("Knowing any subset CANNOT unlock the vault.\n");
 
-    let password = read_confirm("Master password")?;
+    let password = read_confirm("Master password (1/4)")?;
+
+    println!("\nPasskey (2/4) — browser will open for WebAuthn registration…");
+    ceremony::register_passkey(c).await?;
+    println!("✓ passkey registered on this device\n");
 
     // 24-word keyphrase
     let phrase = gen_24_words()?;
@@ -461,18 +471,18 @@ fn init_master(c: &Path) -> Result<()> {
     OsRng.fill_bytes(&mut master_key);
     let master_hex = hex::encode(master_key);
 
-    println!("\n╔════════════════════════════════════════════════════════════════╗");
+    println!("╔════════════════════════════════════════════════════════════════╗");
     println!("║  OFFLINE BACKUP — STORE OFF THIS MACHINE, THEN CONFIRM BELOW   ║");
     println!("╠════════════════════════════════════════════════════════════════╣");
-    println!("║  24-WORD KEYPHRASE:                                            ║");
+    println!("║  24-WORD KEYPHRASE (3/4):                                       ║");
     println!("╚════════════════════════════════════════════════════════════════╝\n");
     println!("{phrase}\n");
     println!("╔════════════════════════════════════════════════════════════════╗");
-    println!("║  MASTER KEY (hex) — random; will be DESTROYED on this node     ║");
+    println!("║  MASTER KEY (4/4, hex) — random; will be DESTROYED on this node║");
     println!("╚════════════════════════════════════════════════════════════════╝\n");
     println!("{master_hex}\n");
-    println!("Optional: write master key to a path YOU control (USB), then we wipe local copy.");
-    eprint!("Write master key file to path (empty to skip file write): ");
+    println!("Write master key to a path YOU control (USB strongly recommended).");
+    eprint!("Write master key file to path (empty to skip file write — you must copy hex): ");
     let _ = io::stderr().flush();
     let mut path_in = String::new();
     io::stdin().read_line(&mut path_in)?;
@@ -481,7 +491,13 @@ fn init_master(c: &Path) -> Result<()> {
         write_secret(Path::new(path_in), master_hex.as_bytes())?;
         println!("✓ wrote master key to {path_in}");
         println!("  Move that media offline. It will NOT be stored under ~/.grid/");
+    } else {
+        println!("⚠ no file path — you must have copied the hex above offline.");
     }
+
+    println!("\nPress Enter after you have saved phrase + master key offline…");
+    let mut _line = String::new();
+    let _ = io::stdin().read_line(&mut _line);
 
     println!("\nType DESTROY to erase the master key from this machine's working memory");
     println!("and finalize the vault (master key is never stored under ~/.grid):");
@@ -500,7 +516,8 @@ fn init_master(c: &Path) -> Result<()> {
     let k_pw = kdf(&password, &salt, "GRID vault password v1");
     let k_ph = kdf(&phrase, &salt, "GRID vault keyphrase v1");
     // Multi-factor XOR seal: sealed = DEK ⊕ K_pw ⊕ K_ph ⊕ master_key
-    // Recover DEK only with all three.
+    // Recover DEK only with password + phrase + master key.
+    // Passkey is a hard ceremony gate on unlock (device-bound).
     let mut dek = [0u8; 32];
     OsRng.fill_bytes(&mut dek);
     let s1 = xor32(&dek, &k_pw);
@@ -520,13 +537,15 @@ fn init_master(c: &Path) -> Result<()> {
         VaultMeta {
             mode: "master".into(),
             encrypted: true,
-            algorithm: "AES-256-GCM+XOR-3factor (pw·phrase·masterkey)".into(),
+            algorithm: "AES-256-GCM+XOR-3factor+passkey-gate (pw·passkey·phrase·masterkey)"
+                .into(),
             created_at: Utc::now().to_rfc3339(),
             public_key_hex: pub_hex.clone(),
             kdf_salt_hex: Some(hex::encode(salt)),
             master_destroyed: true,
             factors: Some(vec![
                 "password".into(),
+                "passkey".into(),
                 "keyphrase24".into(),
                 "master_key_file".into(),
             ]),
@@ -537,13 +556,14 @@ fn init_master(c: &Path) -> Result<()> {
     println!("\n══════════════════════════════════════════════════════════");
     println!("  THE MASTER HAS BEEN DESTROYED ON THIS NODE.");
     println!("  No recoverable master key remains under ~/.grid/");
-    println!("  Unlock forever requires: password + 24 words + master key.");
+    println!("  Unlock forever requires:");
+    println!("    password + passkey + 24 words + master key file");
     println!("  Knowing one factor alone unlocks nothing.");
     println!("══════════════════════════════════════════════════════════\n");
     println!("✓ master vault ready");
     println!("  public: {pub_hex}");
     println!("  master_destroyed: true");
-    println!("  session: UNLOCKED (login again after reboot with all 3 factors)");
+    println!("  session: UNLOCKED (login again after reboot with all 4 factors)");
     Ok(())
 }
 
@@ -624,7 +644,7 @@ pub async fn auth_login(config_dir: &Path) -> Result<()> {
             let v = aes_decrypt(&wrap, &blob)?;
             v.as_slice().try_into().map_err(|_| anyhow::anyhow!("DEK"))?
         }
-        AuthMode::Master => unlock_master(config_dir, &meta)?,
+        AuthMode::Master => unlock_master(config_dir, &meta).await?,
         AuthMode::Nocrypt => unreachable!(),
     };
 
@@ -637,12 +657,30 @@ pub async fn auth_login(config_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn unlock_master(c: &Path, meta: &VaultMeta) -> Result<[u8; 32]> {
-    println!("Master vault unlock — all three factors required.\n");
-    let pw = read_line_secret("Master password")?;
-    let phrase = read_line_secret("24-word keyphrase")?;
+async fn unlock_master(c: &Path, meta: &VaultMeta) -> Result<[u8; 32]> {
+    let needs_passkey = meta
+        .factors
+        .as_ref()
+        .map(|f| f.iter().any(|x| x == "passkey"))
+        .unwrap_or(false)
+        || pstore::has_passkey(c);
+
+    let n = if needs_passkey { 4 } else { 3 };
+    println!("Master vault unlock — all {n} factors required.\n");
+
+    let step_pw = "1";
+    let pw = read_line_secret(&format!("Master password ({step_pw}/{n})"))?;
+
+    if needs_passkey {
+        ceremony::require_passkey(c, &format!("Unlock vault (2/{n}) — passkey")).await?;
+    }
+
+    let step_ph = if needs_passkey { "3" } else { "2" };
+    let phrase = read_line_secret(&format!("24-word keyphrase ({step_ph}/{n})"))?;
+
+    let step_mk = if needs_passkey { "4" } else { "3" };
     println!("Master key: paste hex OR path to key file");
-    let mk_in = read_line_secret("Master key (hex or path)")?;
+    let mk_in = read_line_secret(&format!("Master key ({step_mk}/{n}, hex or path)"))?;
 
     let mut master_key = load_master_key_input(&mk_in)?;
     let salt = salt(meta)?;
@@ -661,7 +699,8 @@ fn unlock_master(c: &Path, meta: &VaultMeta) -> Result<[u8; 32]> {
 
     // verify DEK by attempting decrypt of operator.enc
     let blob = fs::read(p_enc(c))?;
-    let _ = aes_decrypt(&dek, &blob).context("unlock failed — check all three factors")?;
+    let _ = aes_decrypt(&dek, &blob)
+        .context("unlock failed — check password, phrase, and master key")?;
     Ok(dek)
 }
 
