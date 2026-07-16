@@ -23,6 +23,10 @@ pub struct PeerOptions {
     pub listen: String,
     pub connect: Vec<String>,
     pub score: f64,
+    /// Genesis truth URL (e.g. http://127.0.0.1:9100) — source of ban list.
+    pub genesis_url: Option<String>,
+    /// Expected genesis pubkey hex (trust anchor).
+    pub genesis_pubkey: Option<String>,
 }
 
 #[derive(Clone)]
@@ -38,6 +42,9 @@ struct PeerMeta {
 struct State {
     peers: HashMap<String, PeerMeta>,
     known_addrs: HashSet<String>,
+    /// peer_id → ban reason (from verified genesis truth only)
+    banned: HashMap<String, String>,
+    truth_epoch: u64,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -51,10 +58,31 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
     let state: Shared = Arc::new(Mutex::new(State {
         peers: HashMap::new(),
         known_addrs: HashSet::new(),
+        banned: HashMap::new(),
+        truth_epoch: 0,
     }));
 
     for c in &opts.connect {
         state.lock().known_addrs.insert(normalize_addr(c));
+    }
+
+    // Initial + periodic genesis truth pull (ban list)
+    if let Some(ref gurl) = opts.genesis_url {
+        refresh_truth(gurl, opts.genesis_pubkey.as_deref(), &state).await?;
+        let gurl = gurl.clone();
+        let gpk = opts.genesis_pubkey.clone();
+        let state_t = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(15));
+            loop {
+                tick.tick().await;
+                if let Err(e) =
+                    refresh_truth(&gurl, gpk.as_deref(), &state_t).await
+                {
+                    debug!("genesis truth refresh: {e}");
+                }
+            }
+        });
     }
 
     let listener = TcpListener::bind(listen_addr).await?;
@@ -65,6 +93,13 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
     println!("  score    {:.1}", opts.score);
     if !opts.connect.is_empty() {
         println!("  dial     {}", opts.connect.join(", "));
+    }
+    if let Some(ref g) = opts.genesis_url {
+        let ep = state.lock().truth_epoch;
+        let nb = state.lock().banned.len();
+        println!("  genesis  {g} (epoch={ep} bans={nb})");
+    } else {
+        println!("  genesis  (none — bans not enforced)");
     }
     println!("  (Ctrl+C to stop)\n");
 
@@ -251,6 +286,16 @@ async fn handle_connection(
                     println!("[p2p] ignored self-connection");
                     break;
                 }
+                // Genesis ban enforcement
+                {
+                    let s = state.lock();
+                    if let Some(reason) = s.banned.get(&node_id) {
+                        println!(
+                            "[p2p] REJECT banned peer {name} ({node_id}) reason={reason}"
+                        );
+                        break;
+                    }
+                }
                 println!(
                     "[p2p] {dir} hello {name} ({node_id}) class={class} score={score:.0} listen={listen}"
                 );
@@ -362,4 +407,43 @@ fn normalize_addr(a: &str) -> String {
 
 fn addrs_equal(a: &str, b: &str) -> bool {
     normalize_addr(a) == normalize_addr(b)
+}
+
+async fn refresh_truth(
+    url: &str,
+    expected_pubkey: Option<&str>,
+    state: &Shared,
+) -> Result<()> {
+    let truth =
+        crate::genesis::store::fetch_truth(url, expected_pubkey).await?;
+    let mut s = state.lock();
+    if truth.body.epoch < s.truth_epoch {
+        // ignore older snapshots (replay)
+        return Ok(());
+    }
+    if truth.body.epoch > s.truth_epoch {
+        println!(
+            "[p2p] genesis truth epoch {} → {} ({} bans, {} tracked)",
+            s.truth_epoch,
+            truth.body.epoch,
+            truth.body.banned.len(),
+            truth.body.tracked.len()
+        );
+    }
+    s.truth_epoch = truth.body.epoch;
+    s.banned.clear();
+    for b in &truth.body.banned {
+        s.banned.insert(b.peer_id.clone(), b.reason.clone());
+    }
+    // drop active connections to newly banned peers
+    let banned_ids: HashSet<String> = truth.body.banned.iter().map(|b| b.peer_id.clone()).collect();
+    s.peers.retain(|_, p| {
+        if banned_ids.contains(&p.node_id) {
+            println!("[p2p] dropping banned peer {}", p.node_id);
+            false
+        } else {
+            true
+        }
+    });
+    Ok(())
 }

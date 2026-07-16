@@ -11,6 +11,7 @@ pub mod coord;
 pub mod crypto;
 pub mod earn;
 pub mod executor;
+pub mod genesis;
 pub mod node;
 pub mod p2p;
 pub mod por;

@@ -129,6 +129,18 @@ enum Commands {
         name: Option<String>,
         #[arg(long, default_value = "S")]
         class: String,
+        /// Genesis truth URL — ban list source of truth
+        #[arg(long, env = "GRID_GENESIS")]
+        genesis: Option<String>,
+        /// Genesis public key hex (trust anchor)
+        #[arg(long, env = "GRID_GENESIS_PUBKEY")]
+        genesis_pubkey: Option<String>,
+    },
+
+    /// Genesis authority (Phase 0): YOU track peers and ban peers — signed truth only
+    Genesis {
+        #[command(subcommand)]
+        action: GenesisCmd,
     },
 
     /// Wallet stub + Bitcoin TSL reminder
@@ -140,6 +152,56 @@ enum Commands {
         kind: String,
         #[arg(long, default_value = "hello-grid")]
         payload: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GenesisCmd {
+    /// Create genesis Ed25519 keypair (secret never leaves this host)
+    Init,
+    /// Serve signed truth over HTTP (read-only; no remote ban)
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:9100")]
+        bind: String,
+    },
+    /// Track a peer (local secret key required)
+    Track {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        listen: String,
+        #[arg(long, default_value = "S")]
+        class: String,
+    },
+    /// Stop tracking a peer
+    Untrack {
+        #[arg(long)]
+        id: String,
+    },
+    /// Ban a peer — sole authority (local secret key required)
+    Ban {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Remove a ban (local secret key required)
+    Unban {
+        #[arg(long)]
+        id: String,
+    },
+    /// List tracked + banned peers
+    List,
+    /// Print genesis public key hex
+    Pubkey,
+    /// Fetch & verify remote truth (for operators)
+    Truth {
+        #[arg(long, env = "GRID_GENESIS", default_value = "http://127.0.0.1:9100")]
+        url: String,
+        #[arg(long, env = "GRID_GENESIS_PUBKEY")]
+        pubkey: Option<String>,
     },
 }
 
@@ -278,6 +340,8 @@ async fn main() -> Result<()> {
             id,
             name,
             class,
+            genesis,
+            genesis_pubkey,
         } => {
             banner::print_mark();
             println!();
@@ -308,8 +372,14 @@ async fn main() -> Result<()> {
                 listen,
                 connect,
                 score,
+                genesis_url: genesis,
+                genesis_pubkey,
             };
             run_peer(opts).await?;
+        }
+
+        Commands::Genesis { action } => {
+            run_genesis(&config_dir, action).await?;
         }
 
         Commands::Wallet => {
@@ -332,6 +402,107 @@ async fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
+    use grid::genesis::{
+        export_pubkey_hex, generate_keypair, run_genesis_server, store::fetch_truth, GenesisStore,
+    };
+
+    match action {
+        GenesisCmd::Init => {
+            banner::print_banner();
+            println!();
+            let keys = generate_keypair(config_dir)?;
+            println!("✓ Genesis keypair created");
+            println!("  public:  {}", keys.public_hex());
+            println!(
+                "  secret:  {} (mode 0600 — never share)",
+                config_dir.join("genesis/secret.key").display()
+            );
+            println!();
+            println!("Next:");
+            println!("  grid genesis serve --bind 0.0.0.0:9100");
+            println!("  grid genesis track --id <peer> --name <n> --listen host:port");
+            println!("  grid genesis ban --id <peer> --reason \"…\"");
+            println!();
+            println!("Distribute ONLY the public key to peers:");
+            println!("  export GRID_GENESIS_PUBKEY={}", keys.public_hex());
+        }
+        GenesisCmd::Serve { bind } => {
+            banner::print_banner();
+            println!();
+            run_genesis_server(config_dir.clone(), &bind).await?;
+        }
+        GenesisCmd::Track {
+            id,
+            name,
+            listen,
+            class,
+        } => {
+            let mut store = GenesisStore::open(config_dir)?;
+            store.track(&id, &name, &listen, &class)?;
+            println!("✓ tracked {id} epoch={}", store.epoch());
+        }
+        GenesisCmd::Untrack { id } => {
+            let mut store = GenesisStore::open(config_dir)?;
+            if store.untrack(&id)? {
+                println!("✓ untracked {id} epoch={}", store.epoch());
+            } else {
+                println!("peer {id} was not tracked");
+            }
+        }
+        GenesisCmd::Ban { id, reason } => {
+            let mut store = GenesisStore::open(config_dir)?;
+            let rec = store.ban(&id, &reason)?;
+            println!("✓ BANNED {}", rec.peer_id);
+            println!("  reason  {}", rec.reason);
+            println!("  ban_id  {}", rec.ban_id);
+            println!("  epoch   {}", store.epoch());
+            println!("  (signed truth updates — peers must refresh /v1/truth)");
+        }
+        GenesisCmd::Unban { id } => {
+            let mut store = GenesisStore::open(config_dir)?;
+            if store.unban(&id)? {
+                println!("✓ unbanned {id} epoch={}", store.epoch());
+            } else {
+                println!("peer {id} was not banned");
+            }
+        }
+        GenesisCmd::List => {
+            let store = GenesisStore::open(config_dir)?;
+            println!("Genesis truth epoch={}", store.epoch());
+            println!("pubkey {}", store.keys().public_hex());
+            println!("\nTracked ({}):", store.list_tracked().len());
+            for p in store.list_tracked() {
+                println!(
+                    "  · {} name={} class={} listen={}",
+                    p.peer_id, p.name, p.class, p.listen
+                );
+            }
+            println!("\nBanned ({}):", store.list_banned().len());
+            for b in store.list_banned() {
+                println!(
+                    "  · {} reason={} ban_id={}",
+                    b.peer_id, b.reason, b.ban_id
+                );
+            }
+        }
+        GenesisCmd::Pubkey => {
+            println!("{}", export_pubkey_hex(config_dir)?);
+        }
+        GenesisCmd::Truth { url, pubkey } => {
+            let t = fetch_truth(&url, pubkey.as_deref()).await?;
+            println!("✓ signature valid");
+            println!("epoch={} issued={}", t.body.epoch, t.body.issued_at);
+            println!("genesis_pubkey={}", t.body.genesis_pubkey);
+            println!("tracked={} banned={}", t.body.tracked.len(), t.body.banned.len());
+            for b in &t.body.banned {
+                println!("  BAN {} — {}", b.peer_id, b.reason);
+            }
+        }
+    }
     Ok(())
 }
 

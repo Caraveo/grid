@@ -83,9 +83,33 @@ grid bench --duration 5
 grid bench --json
 ```
 
-### P2P mesh (minimal TCP)
+### Genesis (you = source of truth for track + ban)
 
-Two peers on one machine:
+```bash
+# On YOUR secure machine (genesis)
+grid genesis init
+grid genesis serve --bind 127.0.0.1:9100
+
+# Track / ban (local secret key only — no remote ban API)
+grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
+grid genesis ban --id evil-9 --reason "abuse"
+grid genesis list
+```
+
+Peers enforce your signed ban list:
+
+```bash
+export GRID_GENESIS=http://127.0.0.1:9100
+export GRID_GENESIS_PUBKEY=$(grid genesis pubkey)
+
+grid peer --listen 127.0.0.1:9900 \
+  --genesis "$GRID_GENESIS" \
+  --genesis-pubkey "$GRID_GENESIS_PUBKEY"
+```
+
+See [docs/GENESIS.md](./docs/GENESIS.md) for the security model.
+
+### P2P mesh (minimal TCP)
 
 ```bash
 # terminal A
@@ -95,13 +119,14 @@ grid peer --listen 127.0.0.1:9900 --with-bench
 grid peer --listen 127.0.0.1:9901 --connect 127.0.0.1:9900 --with-bench
 ```
 
-You should see **hello**, **pong rtt=… ms**, and a **peers** list. Gossip shares listen addresses so the mesh can grow.
+You should see **hello**, **pong rtt=… ms**, and a **peers** list.
 
 | Command | What |
 |---------|------|
 | `grid coord` | Job coordinator |
 | `grid node` | Miner — claim work, earn |
 | `grid peer` | **P2P** listen/dial, hello, ping RTT, peer gossip |
+| `grid genesis` | **Phase 0 authority** — track peers + ban peers (signed truth) |
 | `grid bench` | **Benchmark** CPU hash + memory throughput |
 | `grid init` | Write `~/.grid/config.toml` |
 | `grid submit` | Submit allowlisted job (`echo`, `hash_file`) |
