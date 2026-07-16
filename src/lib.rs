@@ -11,6 +11,9 @@ pub mod coord;
 pub mod crypto;
 pub mod earn;
 pub mod executor;
+
+// Re-export executor constants for CLI payload defaults
+pub use executor::DEFAULT_BLAKE3_ITERS;
 pub mod genesis;
 pub mod mesh_ping;
 pub mod node;

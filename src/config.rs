@@ -75,7 +75,7 @@ fn default_coordinator() -> String {
     "http://127.0.0.1:8787".into()
 }
 fn default_gpu() -> String {
-    "cpu-demo".into()
+    "cpu".into()
 }
 fn default_poll_ms() -> u64 {
     2000

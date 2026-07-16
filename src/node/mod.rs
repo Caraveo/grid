@@ -1,28 +1,44 @@
-//! Miner loop: heartbeat → claim → execute → complete (+ optional globe ping).
+//! Miner loop: heartbeat → claim → execute verifiable PoR → complete → earn.
 
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
 use crate::config::NodeConfig;
 use crate::coord::CoordinatorClient;
+use crate::earn::EarnLedger;
 use crate::executor::execute;
 use crate::mesh_ping;
 use crate::protocol::{result_commitment, JobKind};
 
 pub async fn run_node(cfg: NodeConfig) -> Result<()> {
     let client = CoordinatorClient::new(&cfg.coordinator);
+    let config_dir = crate::config::NodeConfig::default_dir();
+    // Prefer operator config dir if GRID_CONFIG_DIR set
+    let config_dir = std::env::var_os("GRID_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or(config_dir);
 
-    println!("GRID node {}", cfg.node_id);
+    let operator_pubkey = std::fs::read_to_string(config_dir.join("keys").join("operator.pub"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    println!("GRID miner {}", cfg.node_id);
     println!("  name         {}", cfg.name);
     println!("  class        {}", cfg.class);
     println!("  coordinator  {}", cfg.coordinator);
     println!("  gpu          {}", cfg.gpu_model);
     println!("  cluster      {}", cfg.cluster());
-    if mesh_ping::resolve_coords(&cfg).is_some() {
-        println!("  globe        opt-in coords set (site ping enabled if GRID_SITE_URL)");
-    } else {
-        println!("  globe        off (set globe_lat/lng or GRID_GLOBE_LAT/LNG)");
+    if let Some(ref pk) = operator_pubkey {
+        let short = if pk.len() > 16 { &pk[..16] } else { pk };
+        println!("  operator     {short}…");
     }
+    if mesh_ping::resolve_coords(&cfg).is_some() {
+        println!("  globe        opt-in (location-only ping)");
+    } else {
+        println!("  globe        off");
+    }
+    println!("  work         blake3_work (verifiable CPU PoR)");
     println!("  (Ctrl+C to stop)\n");
 
     match client.health().await {
@@ -31,7 +47,6 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
         Err(e) => warn!("coordinator unreachable ({e}) — will retry"),
     }
 
-    // One globe ping on start (fire-and-forget)
     {
         let cfg_ping = cfg.clone();
         tokio::spawn(async move {
@@ -39,7 +54,6 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
         });
     }
 
-    // Heartbeat task + debounced globe ping
     {
         let client = CoordinatorClient::new(&cfg.coordinator);
         let id = cfg.node_id.clone();
@@ -47,17 +61,17 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
         let gpu = cfg.gpu_model.clone();
         let max_c = cfg.max_concurrent;
         let cluster = cfg.cluster().to_string();
+        let label = cfg.name.clone();
         let cfg_hb = cfg.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
             loop {
                 tick.tick().await;
                 match client
-                    .heartbeat(&id, &class, &gpu, max_c, &cluster)
+                    .heartbeat(&id, &class, &gpu, max_c, &cluster, Some(&label))
                     .await
                 {
                     Ok(_) => {
-                        // At most every 5 min (debounce inside mesh_ping)
                         mesh_ping::ping_globe(&cfg_hb, false).await;
                     }
                     Err(e) => debug!("heartbeat: {e}"),
@@ -66,7 +80,6 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
         });
     }
 
-    // Initial heartbeat (required before claim)
     client
         .heartbeat(
             &cfg.node_id,
@@ -74,6 +87,7 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
             &cfg.gpu_model,
             cfg.max_concurrent,
             cfg.cluster(),
+            Some(&cfg.name),
         )
         .await
         .ok();
@@ -90,7 +104,10 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
                     }
                 };
                 let result = execute(kind, &job.payload);
-                let _c = result_commitment(
+                if let Some(ref err) = result.error {
+                    eprintln!("  exec error: {err}");
+                }
+                let commit = result_commitment(
                     &job.id,
                     &cfg.node_id,
                     result.ok,
@@ -104,11 +121,32 @@ pub async fn run_node(cfg: NodeConfig) -> Result<()> {
                         result.ok,
                         &result.output,
                         result.duration_ms,
+                        operator_pubkey.as_deref(),
                     )
                     .await
                 {
                     Ok((verified, earn)) => {
-                        println!("finished {} verified={} earn={:.4}", job.id, verified, earn);
+                        println!(
+                            "finished {} verified={} earn={:.4} ms={} commit={}",
+                            job.id,
+                            verified,
+                            earn,
+                            result.duration_ms,
+                            &commit[..16.min(commit.len())]
+                        );
+                        if verified && earn > 0.0 {
+                            // Local mirror of earn (coord also persists)
+                            let path = EarnLedger::path_in(&config_dir);
+                            let mut ledger = EarnLedger::load(&path).unwrap_or_default();
+                            ledger.credit_job(
+                                &cfg.node_id,
+                                &job.id,
+                                earn,
+                                &commit,
+                                chrono::Utc::now().to_rfc3339(),
+                            );
+                            let _ = ledger.save(&path);
+                        }
                     }
                     Err(e) => eprintln!("complete error: {e}"),
                 }

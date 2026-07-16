@@ -29,14 +29,18 @@ impl CoordinatorClient {
         gpu_model: &str,
         max_concurrent: u32,
         cluster_id: &str,
+        label: Option<&str>,
     ) -> Result<NodeInfo> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "nodeId": node_id,
             "class": class,
             "gpuModel": gpu_model,
             "maxConcurrent": max_concurrent,
             "clusterId": cluster_id,
         });
+        if let Some(l) = label {
+            body["label"] = serde_json::json!(l);
+        }
         let res = self
             .http
             .post(format!("{}/v1/nodes/heartbeat", self.base))
@@ -79,14 +83,18 @@ impl CoordinatorClient {
         ok: bool,
         output: &str,
         duration_ms: u64,
+        operator_pubkey: Option<&str>,
     ) -> Result<(bool, f64)> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "jobId": job_id,
             "nodeId": node_id,
             "ok": ok,
             "output": output,
             "durationMs": duration_ms,
         });
+        if let Some(pk) = operator_pubkey {
+            body["operatorPubkey"] = serde_json::json!(pk);
+        }
         let res = self
             .http
             .post(format!("{}/v1/jobs/complete", self.base))

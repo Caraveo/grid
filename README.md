@@ -88,20 +88,35 @@ Requires [Rust](https://rustup.rs) only when building from source (the installer
 
 ---
 
-## Quick start
+## Quick start — real pilot fabric
 
-### Jobs (coord + node)
+This is **not a toy echo demo**. The coordinator persists state, auto-feeds
+**verifiable `blake3_work` PoR jobs**, re-executes results to verify, and credits
+an off-chain earn ledger (Bitcoin remains the Transact Security Layer for exit).
 
 ```bash
-# terminal 1
-grid coord
+# once
+grid init --name garage --class S
+grid auth master          # or passkey / …
 
-# terminal 2
-grid init --name garage --class S   # once
-grid node
+# terminal 1 — persistent coordinator (auto blake3_work)
+grid coord --bind 0.0.0.0:8787
 
-# terminal 3
-grid submit --job echo --payload "hello-grid" --wait
+# terminal 2 — mine real PoR
+grid mine
+
+# inspect
+grid stats
+grid wallet
+```
+
+Work kind: `blake3_work` payload `seed|iterations` (default 250k iterated BLAKE3).
+Coordinator verifies by re-computing the digest. Credits land in `~/.grid/earn.json`
+and `~/.grid/coord/state.json` (survive restarts).
+
+```bash
+# optional: submit extra PoR yourself
+grid submit --job blake3_work --wait
 grid stats
 ```
 

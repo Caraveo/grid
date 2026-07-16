@@ -15,7 +15,7 @@ use std::time::Duration;
 use grid::banner;
 use grid::bench;
 use grid::config::{NodeClass, NodeConfig};
-use grid::coord::{run_coordinator, CoordinatorClient};
+use grid::coord::{run_coordinator_with, CoordOptions, CoordinatorClient};
 use grid::earn::EarnLedger;
 use grid::node::run_node;
 use grid::p2p::{run_peer, PeerOptions};
@@ -50,13 +50,20 @@ enum Commands {
         coordinator: String,
     },
 
-    /// Run the job coordinator (Phase 1 embedded server)
+    /// Run the persistent pilot coordinator (auto blake3_work by default)
     Coord {
-        #[arg(long, default_value = "127.0.0.1:8787")]
+        /// Bind address (use 0.0.0.0:8787 to accept LAN peers)
+        #[arg(long, default_value = "0.0.0.0:8787", env = "GRID_COORD_BIND")]
         bind: String,
+        /// State directory (jobs, nodes, earn)
+        #[arg(long, env = "GRID_COORD_DATA")]
+        data_dir: Option<PathBuf>,
+        /// Disable continuous PoR job feeder
+        #[arg(long)]
+        no_auto_work: bool,
     },
 
-    /// Run a miner node (claim jobs, earn)
+    /// Run a miner node — claim verifiable PoR, earn credits
     Node {
         #[arg(long, env = "GRID_COORDINATOR")]
         coordinator: Option<String>,
@@ -70,17 +77,24 @@ enum Commands {
         poll_ms: Option<u64>,
     },
 
-    /// Alias for `grid node`
+    /// Alias for `grid node` (mine)
     Start {
         #[arg(long, env = "GRID_COORDINATOR")]
         coordinator: Option<String>,
     },
 
-    /// Submit a job
+    /// Alias for `grid node`
+    Mine {
+        #[arg(long, env = "GRID_COORDINATOR")]
+        coordinator: Option<String>,
+    },
+
+    /// Submit a job (default: blake3_work PoR)
     Submit {
-        #[arg(long, default_value = "echo")]
+        #[arg(long, default_value = "blake3_work")]
         job: String,
-        #[arg(long, default_value = "hello-grid")]
+        /// For blake3_work: seed|iterations (empty = coordinator default)
+        #[arg(long, default_value = "")]
         payload: String,
         #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
         coordinator: String,
@@ -88,7 +102,7 @@ enum Commands {
         wait: bool,
     },
 
-    /// Coordinator stats
+    /// Coordinator stats + earn
     Stats {
         #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
         coordinator: String,
@@ -147,8 +161,11 @@ enum Commands {
         action: Option<AuthCmd>,
     },
 
-    /// Wallet stub + Bitcoin TSL reminder
-    Wallet,
+    /// Earn balances + Bitcoin TSL exit reminder
+    Wallet {
+        #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
+        coordinator: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -275,10 +292,20 @@ async fn main() -> Result<()> {
             println!("  grid submit --wait  # terminal 3");
         }
 
-        Commands::Coord { bind } => {
+        Commands::Coord {
+            bind,
+            data_dir,
+            no_auto_work,
+        } => {
             banner::print_banner();
             println!();
-            run_coordinator(&bind).await?;
+            let data_dir = data_dir.unwrap_or_else(|| config_dir.join("coord"));
+            let opts = CoordOptions {
+                bind,
+                data_dir,
+                auto_work: !no_auto_work,
+            };
+            run_coordinator_with(opts).await?;
         }
 
         Commands::Node {
@@ -291,13 +318,16 @@ async fn main() -> Result<()> {
             banner::print_mark();
             println!();
             let cfg = load_cfg(&config_dir, coordinator, id, class, gpu, poll_ms)?;
+            // Pass config dir for earn mirror / operator pub
+            std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_node(cfg).await?;
         }
 
-        Commands::Start { coordinator } => {
+        Commands::Start { coordinator } | Commands::Mine { coordinator } => {
             banner::print_mark();
             println!();
             let cfg = load_cfg(&config_dir, coordinator, None, None, None, None)?;
+            std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_node(cfg).await?;
         }
 
@@ -308,10 +338,23 @@ async fn main() -> Result<()> {
             wait,
         } => {
             let client = CoordinatorClient::new(&coordinator);
+            let payload = if payload.is_empty() && job == "blake3_work" {
+                // Unique seed so work is real and non-colliding
+                format!(
+                    "submit:{}:{}|{}",
+                    chrono::Utc::now().timestamp(),
+                    &uuid::Uuid::new_v4().to_string()[..8],
+                    grid::executor::DEFAULT_BLAKE3_ITERS
+                )
+            } else if payload.is_empty() {
+                "grid".into()
+            } else {
+                payload
+            };
             let created = client.submit(&job, &payload).await?;
             println!("{}", serde_json::to_string_pretty(&created)?);
             if wait {
-                for _ in 0..30 {
+                for _ in 0..120 {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     let j = client.get_job(&created.id).await?;
                     println!("status={}", j.status);
@@ -418,16 +461,43 @@ async fn main() -> Result<()> {
             run_auth(&config_dir, action).await?;
         }
 
-        Commands::Wallet => {
+        Commands::Wallet { coordinator } => {
             let tsl = TransactSecurityLayer::default();
-            println!("Wallet (Phase 1 — earn on coordinator; on-rail later)");
+            println!("GRID wallet · pilot earn ledger");
             println!("  {}", tsl.describe());
-            println!("  Exit:  GRID → BTC (hard settlement)");
+            println!("  Exit path: GRID credits → BTC (Transact Security Layer)");
             let path = NodeConfig::path_in(&config_dir);
-            if path.exists() {
+            let node_id = if path.exists() {
                 let c = NodeConfig::load(&path)?;
-                println!("  Node:  {}", c.node_id);
+                println!("  Node:   {} ({})", c.name, c.node_id);
+                Some(c.node_id)
+            } else {
+                None
+            };
+            let local = EarnLedger::load(&EarnLedger::path_in(&config_dir)).unwrap_or_default();
+            if let Some(ref id) = node_id {
+                println!("  Local:  {:.6} credits", local.balance(id));
             }
+            println!("  Minted: {:.6} (local mirror)", local.total_minted);
+            let client = CoordinatorClient::new(&coordinator);
+            match client.stats().await {
+                Ok(s) => {
+                    if let Some(tm) = s.get("totalMinted").and_then(|v| v.as_f64()) {
+                        println!("  Coord:  totalMinted={tm:.6}");
+                    }
+                    if let Some(nodes) = s.get("nodes").and_then(|v| v.as_array()) {
+                        for n in nodes {
+                            let id = n.get("nodeId").and_then(|v| v.as_str()).unwrap_or("?");
+                            let earn = n.get("earnTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let done = n.get("jobsDone").and_then(|v| v.as_u64()).unwrap_or(0);
+                            println!("  · {id}  earn={earn:.4}  jobs_done={done}");
+                        }
+                    }
+                }
+                Err(e) => println!("  Coord:  offline ({e})"),
+            }
+            println!("\n  On-rail Genesis Earn + BTC exit ships when emission is public.");
+            println!("  Until then this ledger is real accounting for verified PoR work.");
         }
     }
 

@@ -2,20 +2,28 @@
 
 use serde::{Deserialize, Serialize};
 
-/// MVP allowlisted job kinds only.
+/// Allowlisted job kinds — only deterministic, verifiable work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
+    /// Legacy identity job (kept for compatibility; not used by fabric auto-work).
     Echo,
+    /// SHA-256 of payload bytes (content digest).
     HashFile,
+    /// CPU Proof-of-Resource: iterated BLAKE3 from seed (verifiable).
+    /// Payload: `seed|iterations` e.g. `grid-por-v1|250000`
+    Blake3Work,
 }
 
 impl JobKind {
     pub fn parse(s: &str) -> anyhow::Result<Self> {
-        match s {
+        match s.trim().to_lowercase().as_str() {
             "echo" => Ok(Self::Echo),
-            "hash_file" => Ok(Self::HashFile),
-            other => anyhow::bail!("unknown job kind '{other}' (allowlist: echo, hash_file)"),
+            "hash_file" | "hash" | "sha256" => Ok(Self::HashFile),
+            "blake3_work" | "blake3" | "por" | "work" => Ok(Self::Blake3Work),
+            other => anyhow::bail!(
+                "unknown job kind '{other}' (allowlist: blake3_work, hash_file, echo)"
+            ),
         }
     }
 
@@ -23,6 +31,7 @@ impl JobKind {
         match self {
             Self::Echo => "echo",
             Self::HashFile => "hash_file",
+            Self::Blake3Work => "blake3_work",
         }
     }
 }
@@ -42,10 +51,16 @@ pub struct Job {
     pub assigned_node_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub earn_credits: Option<f64>,
+    /// Result commitment (sha256 of canonical result) when verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_commitment: Option<String>,
+    /// Operator pubkey that submitted the result (hex), if provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_pubkey: Option<String>,
 }
 
 fn default_timeout() -> u64 {
-    60
+    120
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +92,8 @@ pub struct NodeInfo {
     pub jobs_failed: u64,
     #[serde(default)]
     pub earn_total: f64,
+    #[serde(default)]
+    pub label: String,
 }
 
 fn one() -> u32 {
