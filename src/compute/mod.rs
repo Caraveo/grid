@@ -8,6 +8,7 @@ mod allowlist;
 mod docker;
 mod isolation;
 mod manifest;
+mod registry;
 mod serve;
 mod tunnel;
 
@@ -18,6 +19,7 @@ pub use manifest::{
     machine_id, remove_compute, save_manifest, save_status, ComputeManifest, ComputeStatus,
     ComputeVisibility, DEFAULT_IMAGE,
 };
+pub use registry::{announce_computes, fetch_computes, print_computes};
 pub use serve::{serve_container_job, ContainerJobSpec};
 pub use tunnel::public_endpoint_hint;
 
@@ -112,6 +114,18 @@ pub async fn launch(
     }
 
     save_manifest(config_dir, &manifest)?;
+
+    // Best-effort: register capacity on public compute registry (grid-compute.com)
+    let node_id = std::env::var("GRID_NODE_ID").unwrap_or_else(|_| {
+        crate::config::NodeConfig::load(&crate::config::NodeConfig::path_in(config_dir))
+            .map(|c| c.node_id)
+            .unwrap_or_else(|_| format!("node_{name}"))
+    });
+    let label = crate::config::NodeConfig::load(&crate::config::NodeConfig::path_in(config_dir))
+        .map(|c| c.name)
+        .unwrap_or_else(|_| name.clone());
+    announce_computes(config_dir, &node_id, &label).await;
+
     Ok(manifest)
 }
 

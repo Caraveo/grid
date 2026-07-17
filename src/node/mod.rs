@@ -131,6 +131,7 @@ async fn run_operator(
                 {
                     Ok(_) => {
                         let _ = compute::heartbeat_computes(&cdir);
+                        compute::announce_computes(&cdir, &id, &label).await;
                         mesh_ping::ping_globe(&cfg_hb, false).await;
                     }
                     Err(e) => debug!("heartbeat: {e}"),

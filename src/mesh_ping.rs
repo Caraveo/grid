@@ -69,6 +69,11 @@ pub struct RegistrySnapshot {
     pub nodes: Vec<RegistryNode>,
     #[serde(default)]
     pub stats: Option<serde_json::Value>,
+    /// Compute capacity from site registry (may be empty on older servers).
+    #[serde(default)]
+    pub computes: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub compute_stats: Option<serde_json::Value>,
 }
 
 fn now_unix() -> u64 {
@@ -231,6 +236,24 @@ pub fn print_registry(snap: &RegistrySnapshot, json: bool) -> Result<()> {
         println!();
         println!("  (no peers yet — run `grid node` with globe coords to join)");
         println!("  Globe: https://grid-compute.com/#nodes");
+    }
+
+    // Compute capacity (from same registry response when present)
+    if let Some(ref cs) = snap.compute_stats {
+        println!();
+        println!("Computes (capacity registry)");
+        println!(
+            "  available={} busy={} offline={} freeSlots={}",
+            cs.get("available").and_then(|v| v.as_u64()).unwrap_or(0),
+            cs.get("busy").and_then(|v| v.as_u64()).unwrap_or(0),
+            cs.get("offline").and_then(|v| v.as_u64()).unwrap_or(0),
+            cs.get("freeSlots").and_then(|v| v.as_u64()).unwrap_or(0),
+        );
+        println!("  detail    grid compute available");
+        println!("  api       {base}/api/registry/computes?available=1");
+    } else if !snap.computes.is_empty() {
+        println!();
+        println!("Computes: {} listed — grid compute available", snap.computes.len());
     }
     Ok(())
 }

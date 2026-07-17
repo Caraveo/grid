@@ -119,6 +119,20 @@ grid wallet
 
 Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). Docker required for host path (`colima start` / Docker Desktop).
 
+### Public compute registry (grid-compute.com)
+
+Hosts announce capacity to the site; anyone can check availability:
+
+```bash
+grid compute available              # free slots only
+grid compute available --all        # include busy/offline
+grid compute announce               # re-push local computes
+grid registry                       # peers + compute stats
+```
+
+API: `GET https://grid-compute.com/api/registry/computes?available=1`  
+Announce: `POST /api/registry/computes` (same webhook secret as mesh ping). No IPs stored.
+
 
 Work kind: `blake3_work` payload `seed|iterations` (default 250k iterated BLAKE3).
 Coordinator verifies by re-computing the digest. Credits land in `~/.grid/earn.json`

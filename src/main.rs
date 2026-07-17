@@ -242,6 +242,18 @@ enum ComputeCmd {
     Status {
         name: String,
     },
+    /// Query public compute registry for available capacity (grid-compute.com)
+    Available {
+        /// Include busy/offline, not only available
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, env = "GRID_REGISTRY_URL")]
+        url: Option<String>,
+    },
+    /// Re-announce local computes to the public registry
+    Announce,
     /// Stop capacity (keep manifest)
     Stop {
         name: String,
@@ -488,6 +500,22 @@ async fn main() -> Result<()> {
         Commands::Compute { action } => match action {
             ComputeCmd::List => compute::print_list(&config_dir)?,
             ComputeCmd::Status { name } => compute::print_status(&config_dir, &name)?,
+            ComputeCmd::Available { all, json, url } => {
+                let snap = compute::fetch_computes(url.as_deref(), !all).await?;
+                compute::print_computes(&snap, json)?;
+            }
+            ComputeCmd::Announce => {
+                let path = NodeConfig::path_in(&config_dir);
+                let (node_id, label) = if path.exists() {
+                    let c = NodeConfig::load(&path)?;
+                    (c.node_id, c.name)
+                } else {
+                    ("node_local".into(), "local".into())
+                };
+                compute::announce_computes(&config_dir, &node_id, &label).await;
+                println!("announced local computes → {}", grid::mesh_ping::registry_url());
+                println!("  check: grid compute available");
+            }
             ComputeCmd::Stop { name } => {
                 compute::stop(&config_dir, &name)?;
                 println!("stopped {name}");
