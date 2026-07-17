@@ -449,11 +449,13 @@ print_next() {
   grid node                 # terminal 2
   grid submit --wait        # terminal 3
 
-Optional globe pin (location only — never IPs):
-  write ~/.grid/env (mode 600) with GRID_SITE_URL + GRID_WEBHOOK_SECRET + coords
+Public mesh registry: https://grid-compute.com
+  grid registry                 # list peers
+  # join globe (location only — never IPs):
+  # write ~/.grid/env (mode 600) with GRID_WEBHOOK_SECRET + GRID_GLOBE_LAT/LNG
 
 Docs: https://github.com/Caraveo/grid
-Site: https://grid-site-ochre.vercel.app
+Site / registry: https://grid-compute.com
 EOF
 }
 

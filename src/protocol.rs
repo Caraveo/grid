@@ -12,7 +12,20 @@ pub enum JobKind {
     HashFile,
     /// CPU Proof-of-Resource: iterated BLAKE3 from seed (verifiable).
     /// Payload: `seed|iterations` e.g. `grid-por-v1|250000`
+    /// **Mine track** — transactional security / slower earn.
     Blake3Work,
+    /// Isolated container job for **host track** (useful work, higher earn).
+    /// Payload: JSON `{image,cmd,…}` or `image|cmd…`
+    ContainerWork,
+}
+
+/// Earn / claim track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobTrack {
+    /// Useful compute (containers) — higher earn.
+    Host,
+    /// PoR / fabric security — slower earn.
+    Mine,
 }
 
 impl JobKind {
@@ -20,9 +33,10 @@ impl JobKind {
         match s.trim().to_lowercase().as_str() {
             "echo" => Ok(Self::Echo),
             "hash_file" | "hash" | "sha256" => Ok(Self::HashFile),
-            "blake3_work" | "blake3" | "por" | "work" => Ok(Self::Blake3Work),
+            "blake3_work" | "blake3" | "por" | "work" | "mine" => Ok(Self::Blake3Work),
+            "container_work" | "container" | "host" | "docker" => Ok(Self::ContainerWork),
             other => anyhow::bail!(
-                "unknown job kind '{other}' (allowlist: blake3_work, hash_file, echo)"
+                "unknown job kind '{other}' (allowlist: blake3_work, container_work, hash_file, echo)"
             ),
         }
     }
@@ -32,6 +46,14 @@ impl JobKind {
             Self::Echo => "echo",
             Self::HashFile => "hash_file",
             Self::Blake3Work => "blake3_work",
+            Self::ContainerWork => "container_work",
+        }
+    }
+
+    pub fn track(self) -> JobTrack {
+        match self {
+            Self::ContainerWork => JobTrack::Host,
+            Self::Blake3Work | Self::Echo | Self::HashFile => JobTrack::Mine,
         }
     }
 }

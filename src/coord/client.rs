@@ -54,7 +54,12 @@ impl CoordinatorClient {
     }
 
     pub async fn claim(&self, node_id: &str) -> Result<Option<Job>> {
-        let body = serde_json::json!({ "nodeId": node_id });
+        self.claim_track(node_id, "both").await
+    }
+
+    /// `track`: `host` | `mine` | `both`
+    pub async fn claim_track(&self, node_id: &str, track: &str) -> Result<Option<Job>> {
+        let body = serde_json::json!({ "nodeId": node_id, "track": track });
         let res = self
             .http
             .post(format!("{}/v1/nodes/claim", self.base))

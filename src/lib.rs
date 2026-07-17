@@ -6,6 +6,7 @@
 
 pub mod banner;
 pub mod bench;
+pub mod compute;
 pub mod config;
 pub mod coord;
 pub mod crypto;

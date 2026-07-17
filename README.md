@@ -88,27 +88,37 @@ Requires [Rust](https://rustup.rs) only when building from source (the installer
 
 ---
 
-## Quick start — real pilot fabric
+## Quick start — host + mine
 
-This is **not a toy echo demo**. The coordinator persists state, auto-feeds
-**verifiable `blake3_work` PoR jobs**, re-executes results to verify, and credits
-an off-chain earn ledger (Bitcoin remains the Transact Security Layer for exit).
+| Track | Command | What | Earn |
+|-------|---------|------|------|
+| **Host** | `grid host` | Pull useful **container** jobs, serve isolated | **Higher** |
+| **Mine** | `grid mine` | PoR / transactional-security work (`blake3_work`) | **Slower** |
+| **Both** | `grid node` | Host + mine on one box | mixed |
 
 ```bash
 # once
 grid init --name garage --class S
 grid auth master          # or passkey / …
 
-# terminal 1 — persistent coordinator (auto blake3_work)
+# terminal 1 — coordinator (auto mine PoR + demo host jobs)
 grid coord --bind 0.0.0.0:8787
 
-# terminal 2 — mine real PoR
-grid mine
+# terminal 2 — name a compute you own, then HOST useful work
+grid launch garage --public          # default public; use --private for fabric-only
+grid host                            # pull container_work · higher earn
+
+# terminal 3 — optional MINE security work
+grid mine                            # blake3_work · slower earn
 
 # inspect
+grid compute list
 grid stats
 grid wallet
 ```
+
+Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). Docker required for host path (`colima start` / Docker Desktop).
+
 
 Work kind: `blake3_work` payload `seed|iterations` (default 250k iterated BLAKE3).
 Coordinator verifies by re-computing the digest. Credits land in `~/.grid/earn.json`
@@ -128,17 +138,22 @@ grid bench --duration 5
 grid bench --json
 ```
 
-### Public globe ping (opt-in, location only)
+### Public mesh registry — [grid-compute.com](https://grid-compute.com)
 
-Shows your node on [grid-site-ochre.vercel.app/#nodes](https://grid-site-ochre.vercel.app/#nodes).  
-**Never sends IPs, ports, or endpoints** — only `nodeId`, label, class, region, lat/lng.
+**grid-compute.com** is the network’s public peer registry (Cloudflare).  
+Location-only — **never** IPs, ports, or endpoints.
 
-**Wire once** (recommended) — create `~/.grid/env` (mode `600`). The CLI loads it automatically on every command; shell exports still win.
+```bash
+grid registry              # list peers from https://grid-compute.com/api/registry
+grid registry --json
+```
+
+**Join the registry** (opt-in coords) — create `~/.grid/env` (mode `600`):
 
 ```bash
 # ~/.grid/env   (chmod 600)  — never commit this file
-GRID_SITE_URL=https://grid-site-ochre.vercel.app
-GRID_WEBHOOK_SECRET=...          # Vercel → grid-site → GRID_WEBHOOK_SECRET
+# GRID_SITE_URL defaults to https://grid-compute.com if unset
+GRID_WEBHOOK_SECRET=...          # Cloudflare Worker secret (required in prod)
 GRID_GLOBE_LAT=37.7
 GRID_GLOBE_LNG=-122.4
 GRID_GLOBE_REGION=NA-W
@@ -151,10 +166,10 @@ GRID_GLOBE_REGION=NA-W
 # globe_lng = -122.4
 # globe_region = "NA-W"
 
-grid node   # pings on start + every ~5m after heartbeat
+grid node   # pings registry on start + every ~5m after heartbeat
 ```
 
-Skip coords or site URL → mining continues; globe ping is skipped.
+Skip coords → mining continues; you just won’t appear on the globe/registry.
 
 ### Auth (protect operator keys)
 
@@ -203,7 +218,8 @@ You should see **hello**, **pong rtt=… ms**, and a **peers** list.
 | `grid node` | Miner — claim work, earn |
 | `grid peer` | **P2P** listen/dial, hello, ping RTT, peer gossip |
 | `grid auth` | Protect operator keys (passkey / password / 24-word / master / nocrypt) |
-| `grid genesis` | Phase 0 peer registry + signed truth |
+| `grid registry` | **Public mesh registry** (grid-compute.com) |
+| `grid genesis` | Phase 0 signed truth / ban list (local authority) |
 | `grid bench` | **Benchmark** CPU hash + memory throughput |
 | `grid init` | Write `~/.grid/config.toml` |
 | `grid submit` | Submit allowlisted job (`echo`, `hash_file`) |

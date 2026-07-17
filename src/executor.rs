@@ -45,15 +45,32 @@ pub fn execute(kind: JobKind, payload: &str) -> ExecResult {
                 error: Some(e),
             },
         },
+        // Container jobs must use async host path (`compute::serve_container_job`).
+        JobKind::ContainerWork => ExecResult {
+            ok: false,
+            output: String::new(),
+            duration_ms: t0.elapsed().as_millis() as u64,
+            error: Some("container_work requires grid host (async docker path)".into()),
+        },
     }
 }
 
-/// Deterministic re-check for coordinator verification.
+/// Deterministic re-check for coordinator verification (sync kinds only).
 pub fn expected_output(kind: JobKind, payload: &str) -> Result<String, String> {
     match kind {
         JobKind::Echo => Ok(payload.to_string()),
         JobKind::HashFile => Ok(crate::crypto::sha256_hex(payload.as_bytes())),
         JobKind::Blake3Work => blake3_work(payload),
+        JobKind::ContainerWork => {
+            // Prefer pure prediction for echo-style cmds; coord async path may re-run docker.
+            if let Ok(spec) = crate::compute::ContainerJobSpec::parse(payload) {
+                if spec.cmd.len() >= 2 && (spec.cmd[0] == "echo" || spec.cmd[0].ends_with("/echo"))
+                {
+                    return Ok(spec.cmd[1..].join(" "));
+                }
+            }
+            Err("container_work: use async expected_container_output on coordinator".into())
+        }
     }
 }
 

@@ -28,14 +28,18 @@ use crate::por::{
     allocate_inclusion, allocate_proportional, effective_score, inputs_from_jobs, split_emission,
     NodeScore,
 };
-use crate::protocol::{result_commitment, Job, JobKind, NodeInfo};
+use crate::protocol::{result_commitment, Job, JobKind, JobTrack, NodeInfo};
 use crate::tsl::TransactSecurityLayer;
 
-/// Credits allocated per verified PoR event (off-chain pilot ledger).
+/// Credits per verified **mine** (PoR / transactional security) event — slower earn.
 const POR_EVENT_MINT: f64 = 100.0;
-/// Keep the queue fed so miners always have real work.
+/// Credits per verified **host** (useful container) event — higher earn.
+const HOST_EVENT_MINT: f64 = 400.0;
+/// Keep the mine queue fed so miners always have security work.
 const AUTO_WORK_TARGET_QUEUED: usize = 8;
 const AUTO_WORK_ITERS: u64 = DEFAULT_BLAKE3_ITERS;
+/// Optional host demo jobs (allowlisted echo) when auto_work on.
+const AUTO_HOST_TARGET_QUEUED: usize = 2;
 
 #[derive(Clone)]
 struct App {
@@ -198,34 +202,85 @@ fn banner_coord(addr: &SocketAddr, opts: &CoordOptions) {
 
 fn feed_auto_work(app: &App) {
     let mut g = app.inner.lock();
-    let queued = g
+    let mine_queued = g
         .queue
         .iter()
-        .filter(|id| g.jobs.get(*id).map(|j| j.status == "queued").unwrap_or(false))
+        .filter(|id| {
+            g.jobs.get(*id).map(|j| {
+                j.status == "queued"
+                    && JobKind::parse(&j.kind)
+                        .map(|k| k.track() == JobTrack::Mine)
+                        .unwrap_or(true)
+            }).unwrap_or(false)
+        })
         .count();
-    if queued >= AUTO_WORK_TARGET_QUEUED {
-        return;
+    if mine_queued < AUTO_WORK_TARGET_QUEUED {
+        let need = AUTO_WORK_TARGET_QUEUED - mine_queued;
+        let now = Utc::now().timestamp() as u64;
+        for _ in 0..need {
+            g.work_seq = g.work_seq.saturating_add(1);
+            let payload = fabric_work_payload(now, g.work_seq, AUTO_WORK_ITERS);
+            let job = Job {
+                id: format!("por_{}", &Uuid::new_v4().to_string()[..10]),
+                kind: JobKind::Blake3Work.as_str().into(),
+                payload,
+                created_at: Utc::now().to_rfc3339(),
+                timeout_sec: 180,
+                status: "queued".into(),
+                assigned_node_id: None,
+                earn_credits: None,
+                result_commitment: None,
+                operator_pubkey: None,
+            };
+            g.queue.push_back(job.id.clone());
+            g.jobs.insert(job.id.clone(), job);
+            g.dirty = true;
+        }
     }
-    let need = AUTO_WORK_TARGET_QUEUED - queued;
-    let now = Utc::now().timestamp() as u64;
-    for _ in 0..need {
-        g.work_seq = g.work_seq.saturating_add(1);
-        let payload = fabric_work_payload(now, g.work_seq, AUTO_WORK_ITERS);
-        let job = Job {
-            id: format!("por_{}", &Uuid::new_v4().to_string()[..10]),
-            kind: JobKind::Blake3Work.as_str().into(),
-            payload,
-            created_at: Utc::now().to_rfc3339(),
-            timeout_sec: 180,
-            status: "queued".into(),
-            assigned_node_id: None,
-            earn_credits: None,
-            result_commitment: None,
-            operator_pubkey: None,
-        };
-        g.queue.push_back(job.id.clone());
-        g.jobs.insert(job.id.clone(), job);
-        g.dirty = true;
+
+    // Host track: small allowlisted container echo jobs (useful-serve demo)
+    let host_queued = g
+        .queue
+        .iter()
+        .filter(|id| {
+            g.jobs.get(*id).map(|j| {
+                j.status == "queued"
+                    && JobKind::parse(&j.kind)
+                        .map(|k| k.track() == JobTrack::Host)
+                        .unwrap_or(false)
+            }).unwrap_or(false)
+        })
+        .count();
+    if host_queued < AUTO_HOST_TARGET_QUEUED {
+        let need = AUTO_HOST_TARGET_QUEUED - host_queued;
+        for _ in 0..need {
+            g.work_seq = g.work_seq.saturating_add(1);
+            let token = format!("grid-host-{}", g.work_seq);
+            let payload = serde_json::json!({
+                "image": "alpine:3.20",
+                "cmd": ["echo", token],
+                "timeoutSec": 60,
+                "cpus": 0.25,
+                "memoryMb": 128,
+                "network": false
+            })
+            .to_string();
+            let job = Job {
+                id: format!("host_{}", &Uuid::new_v4().to_string()[..10]),
+                kind: JobKind::ContainerWork.as_str().into(),
+                payload,
+                created_at: Utc::now().to_rfc3339(),
+                timeout_sec: 120,
+                status: "queued".into(),
+                assigned_node_id: None,
+                earn_credits: None,
+                result_commitment: None,
+                operator_pubkey: None,
+            };
+            g.queue.push_back(job.id.clone());
+            g.jobs.insert(job.id.clone(), job);
+            g.dirty = true;
+        }
     }
 }
 
@@ -286,10 +341,14 @@ async fn create_job(
     let payload = body.payload.unwrap_or_else(|| {
         fabric_work_payload(Utc::now().timestamp() as u64, 0, DEFAULT_BLAKE3_ITERS)
     });
-    // Validate payload early for blake3
+    // Validate payload early
     if let Ok(JobKind::Blake3Work) = JobKind::parse(&kind_s) {
         crate::executor::parse_blake3_payload(&payload)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    }
+    if let Ok(JobKind::ContainerWork) = JobKind::parse(&kind_s) {
+        crate::compute::ContainerJobSpec::parse(&payload)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     }
     let job = Job {
         id: format!("job_{}", &Uuid::new_v4().to_string()[..8]),
@@ -365,6 +424,24 @@ async fn heartbeat(
 #[serde(rename_all = "camelCase")]
 struct ClaimBody {
     node_id: String,
+    /// `host` | `mine` | `both` (default both for back-compat)
+    #[serde(default)]
+    track: Option<String>,
+}
+
+fn track_matches(job_kind: &str, want: &str) -> bool {
+    let want = want.to_lowercase();
+    if want.is_empty() || want == "both" || want == "all" {
+        return true;
+    }
+    let Ok(k) = JobKind::parse(job_kind) else {
+        return want == "mine";
+    };
+    match want.as_str() {
+        "host" => k.track() == JobTrack::Host,
+        "mine" => k.track() == JobTrack::Mine,
+        _ => true,
+    }
 }
 
 async fn claim(
@@ -379,9 +456,19 @@ async fn claim(
         )
             .into_response();
     }
-    while let Some(id) = g.queue.pop_front() {
-        if let Some(job) = g.jobs.get_mut(&id) {
-            if job.status == "queued" {
+    let want = body.track.unwrap_or_else(|| "both".into());
+    let n = g.queue.len();
+    for _ in 0..n {
+        let Some(id) = g.queue.pop_front() else {
+            break;
+        };
+        let take = g
+            .jobs
+            .get(&id)
+            .map(|j| j.status == "queued" && track_matches(&j.kind, &want))
+            .unwrap_or(false);
+        if take {
+            if let Some(job) = g.jobs.get_mut(&id) {
                 job.status = "assigned".into();
                 job.assigned_node_id = Some(body.node_id.clone());
                 let job_out = job.clone();
@@ -391,6 +478,11 @@ async fn claim(
                     Json(serde_json::json!({ "job": job_out })),
                 )
                     .into_response();
+            }
+        } else {
+            // put back non-matching still-queued jobs
+            if g.jobs.get(&id).map(|j| j.status == "queued").unwrap_or(false) {
+                g.queue.push_back(id);
             }
         }
     }
@@ -434,8 +526,19 @@ async fn complete_job(
     }
 
     let kind = JobKind::parse(&kind_s).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let expect = expected_output(kind, &payload).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let verified = body.ok && body.output == expect;
+    let verified = if kind == JobKind::ContainerWork {
+        // Host path: predict echo-style output or accept ok + non-empty for allowlisted images
+        match expected_output(kind, &payload) {
+            Ok(expect) => body.ok && body.output.trim() == expect.trim(),
+            Err(_) => {
+                // Fallback: ok + non-empty output (async docker re-run optional later)
+                body.ok && !body.output.trim().is_empty()
+            }
+        }
+    } else {
+        let expect = expected_output(kind, &payload).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        body.ok && body.output == expect
+    };
     let commit = result_commitment(
         &body.job_id,
         &body.node_id,
@@ -454,7 +557,12 @@ async fn complete_job(
 
     let mut earn = 0.0;
     if verified {
-        earn = credit_event(&mut g, &body.node_id);
+        let pool = if kind.track() == JobTrack::Host {
+            HOST_EVENT_MINT
+        } else {
+            POR_EVENT_MINT
+        };
+        earn = credit_event(&mut g, &body.node_id, pool);
         g.earn.credit_job(
             &body.node_id,
             &body.job_id,
@@ -498,7 +606,7 @@ async fn complete_job(
     })))
 }
 
-fn credit_event(store: &mut Store, winner: &str) -> f64 {
+fn credit_event(store: &mut Store, winner: &str, event_mint: f64) -> f64 {
     let scores: Vec<NodeScore> = store
         .nodes
         .values()
@@ -518,7 +626,7 @@ fn credit_event(store: &mut Store, winner: &str) -> f64 {
         })
         .collect();
 
-    let (prop_pool, inc_pool) = split_emission(POR_EVENT_MINT);
+    let (prop_pool, inc_pool) = split_emission(event_mint);
     let prop = allocate_proportional(&scores, prop_pool);
     let inc = allocate_inclusion(&scores, inc_pool);
 
@@ -561,7 +669,8 @@ async fn stats(State(app): State<App>) -> impl IntoResponse {
         "phase": 1,
         "mode": "pilot-fabric",
         "tsl": "bitcoin",
-        "work": "blake3_work",
+        "work": ["blake3_work", "container_work"],
+        "tracks": { "host": "container_work (higher earn)", "mine": "blake3_work (slower earn)" },
         "queueDepth": queued,
         "verifiedJobs": verified,
         "totalJobs": g.jobs.len(),

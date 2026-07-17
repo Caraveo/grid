@@ -1,9 +1,10 @@
 //! `grid` — Phase 1 useful mining CLI.
 //!
 //! ```text
-//! grid coord          # start coordinator
-//! grid node           # mine
-//! grid submit --wait  # buy/demo job
+//! grid launch garage --public   # name a compute
+//! grid host                     # pull useful work · higher earn
+//! grid mine                     # PoR security work · slower earn
+//! grid coord                    # coordinator
 //! ```
 
 use anyhow::Result;
@@ -14,17 +15,20 @@ use std::time::Duration;
 
 use grid::banner;
 use grid::bench;
+use grid::compute::{self, ComputeVisibility, DEFAULT_IMAGE};
 use grid::config::{NodeClass, NodeConfig};
 use grid::coord::{run_coordinator_with, CoordOptions, CoordinatorClient};
 use grid::earn::EarnLedger;
-use grid::node::run_node;
+use grid::node::{run_host, run_mine, run_node};
 use grid::p2p::{run_peer, PeerOptions};
 use grid::resources;
 use grid::tsl::TransactSecurityLayer;
 
 #[derive(Parser)]
 #[command(name = "grid")]
-#[command(about = "GRID Phase 1 — useful mining (Bitcoin = Transact Security Layer)")]
+#[command(
+    about = "GRID — host useful compute · mine security PoR · Bitcoin TSL"
+)]
 #[command(after_help = banner::BANNER)]
 #[command(author, version)]
 struct Cli {
@@ -63,7 +67,65 @@ enum Commands {
         no_auto_work: bool,
     },
 
-    /// Run a miner node — claim verifiable PoR, earn credits
+    /// Launch a named compute you host exclusively on the grid
+    Launch {
+        /// Compute name (e.g. garage, render-1)
+        name: String,
+        /// Allowlisted container image
+        #[arg(long, default_value = DEFAULT_IMAGE)]
+        image: String,
+        /// Public tunnel/announce (default)
+        #[arg(long, group = "vis")]
+        public: bool,
+        /// Fabric-only — no public endpoint
+        #[arg(long, group = "vis")]
+        private: bool,
+        /// Runtime backend
+        #[arg(long, default_value = "docker")]
+        backend: String,
+        #[arg(long, default_value = "1.0")]
+        cpus: f64,
+        #[arg(long, default_value = "512")]
+        memory: u64,
+        #[arg(long, default_value = "1")]
+        replicas: u32,
+        #[arg(long, default_value = "S")]
+        class: String,
+        /// Optional service port for public hint
+        #[arg(long)]
+        port: Option<u16>,
+    },
+
+    /// HOST — pull useful container work, serve isolated, higher earn
+    Host {
+        #[arg(long, env = "GRID_COORDINATOR")]
+        coordinator: Option<String>,
+        /// Only serve jobs for this compute name
+        #[arg(long)]
+        compute: Option<String>,
+        #[arg(long, env = "GRID_NODE_ID")]
+        id: Option<String>,
+        #[arg(long)]
+        poll_ms: Option<u64>,
+    },
+
+    /// MINE — PoR / transactional security work, slower earn
+    Mine {
+        #[arg(long, env = "GRID_COORDINATOR")]
+        coordinator: Option<String>,
+        #[arg(long, env = "GRID_NODE_ID")]
+        id: Option<String>,
+        #[arg(long)]
+        poll_ms: Option<u64>,
+    },
+
+    /// Manage named computes
+    Compute {
+        #[command(subcommand)]
+        action: ComputeCmd,
+    },
+
+    /// Host + mine together (one-box)
     Node {
         #[arg(long, env = "GRID_COORDINATOR")]
         coordinator: Option<String>,
@@ -77,23 +139,17 @@ enum Commands {
         poll_ms: Option<u64>,
     },
 
-    /// Alias for `grid node` (mine)
+    /// Alias for `grid node` (host + mine)
     Start {
         #[arg(long, env = "GRID_COORDINATOR")]
         coordinator: Option<String>,
     },
 
-    /// Alias for `grid node`
-    Mine {
-        #[arg(long, env = "GRID_COORDINATOR")]
-        coordinator: Option<String>,
-    },
-
-    /// Submit a job (default: blake3_work PoR)
+    /// Submit a job (default: blake3_work mine PoR)
     Submit {
         #[arg(long, default_value = "blake3_work")]
         job: String,
-        /// For blake3_work: seed|iterations (empty = coordinator default)
+        /// blake3_work: seed|iters · container_work: JSON or image|cmd…
         #[arg(long, default_value = "")]
         payload: String,
         #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
@@ -165,6 +221,52 @@ enum Commands {
     Wallet {
         #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
         coordinator: String,
+    },
+
+    /// Public mesh registry (default: https://grid-compute.com)
+    Registry {
+        /// Override registry base URL
+        #[arg(long, env = "GRID_REGISTRY_URL")]
+        url: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComputeCmd {
+    /// List computes on this machine
+    List,
+    /// Status for one compute
+    Status {
+        name: String,
+    },
+    /// Stop capacity (keep manifest)
+    Stop {
+        name: String,
+    },
+    /// Start / re-ready from manifest
+    Start {
+        name: String,
+    },
+    /// Stop and delete local state
+    Destroy {
+        name: String,
+    },
+    /// Container logs (if any runtime ids)
+    Logs {
+        name: String,
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Export portable manifest JSON (change machines)
+    Export {
+        name: String,
+    },
+    /// Import manifest JSON from file or stdin (-)
+    Import {
+        path: String,
     },
 }
 
@@ -287,9 +389,10 @@ async fn main() -> Result<()> {
             println!("  Coord:    {}", cfg.coordinator);
             println!("  Config:   {}", path.display());
             println!("\nNext:");
-            println!("  grid coord          # terminal 1");
-            println!("  grid node           # terminal 2");
-            println!("  grid submit --wait  # terminal 3");
+            println!("  grid coord");
+            println!("  grid launch garage --public");
+            println!("  grid host            # useful work · higher earn");
+            println!("  grid mine            # security PoR · slower earn");
         }
 
         Commands::Coord {
@@ -308,6 +411,129 @@ async fn main() -> Result<()> {
             run_coordinator_with(opts).await?;
         }
 
+        Commands::Launch {
+            name,
+            image,
+            public,
+            private,
+            backend,
+            cpus,
+            memory,
+            replicas,
+            class,
+            port,
+        } => {
+            banner::print_mark();
+            println!();
+            // default public unless --private
+            let visibility = if private && !public {
+                ComputeVisibility::Private
+            } else {
+                ComputeVisibility::Public
+            };
+            let m = compute::launch(
+                &config_dir,
+                &name,
+                &image,
+                visibility,
+                &backend,
+                cpus,
+                memory,
+                replicas,
+                &class,
+                port,
+            )
+            .await?;
+            println!("✓ Compute launched: {}", m.name);
+            println!("  image       {}", m.image);
+            println!("  visibility  {}", m.visibility.as_str());
+            println!("  backend     {}", m.backend);
+            println!("  replicas    {}", m.replicas);
+            println!("  class       {}", m.class);
+            println!("  machine     {}", m.machine_id);
+            if let Some(u) = &m.public_url {
+                println!("  endpoint    {u}");
+            }
+            println!("\nNext:");
+            println!("  grid host              # pull & serve useful jobs (higher earn)");
+            println!("  grid compute list");
+            println!("  grid mine              # optional: security PoR (slower earn)");
+        }
+
+        Commands::Host {
+            coordinator,
+            compute,
+            id,
+            poll_ms,
+        } => {
+            banner::print_mark();
+            println!();
+            let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
+            std::env::set_var("GRID_CONFIG_DIR", &config_dir);
+            run_host(cfg, compute).await?;
+        }
+
+        Commands::Mine {
+            coordinator,
+            id,
+            poll_ms,
+        } => {
+            banner::print_mark();
+            println!();
+            let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
+            std::env::set_var("GRID_CONFIG_DIR", &config_dir);
+            run_mine(cfg).await?;
+        }
+
+        Commands::Compute { action } => match action {
+            ComputeCmd::List => compute::print_list(&config_dir)?,
+            ComputeCmd::Status { name } => compute::print_status(&config_dir, &name)?,
+            ComputeCmd::Stop { name } => {
+                compute::stop(&config_dir, &name)?;
+                println!("stopped {name}");
+            }
+            ComputeCmd::Start { name } => {
+                let m = compute::load_manifest(&config_dir, &name)?;
+                let m = compute::launch(
+                    &config_dir,
+                    &m.name,
+                    &m.image,
+                    m.visibility,
+                    &m.backend,
+                    m.cpus,
+                    m.memory_mb,
+                    m.replicas,
+                    &m.class,
+                    m.port,
+                )
+                .await?;
+                println!("ready {} ({})", m.name, m.visibility.as_str());
+            }
+            ComputeCmd::Destroy { name } => {
+                compute::destroy(&config_dir, &name)?;
+                println!("destroyed {name}");
+            }
+            ComputeCmd::Logs { name, follow } => compute::logs(&config_dir, &name, follow)?,
+            ComputeCmd::Export { name } => {
+                println!("{}", compute::export_compute(&config_dir, &name)?);
+            }
+            ComputeCmd::Import { path } => {
+                let raw = if path == "-" {
+                    use std::io::Read;
+                    let mut s = String::new();
+                    std::io::stdin().read_to_string(&mut s)?;
+                    s
+                } else {
+                    std::fs::read_to_string(&path)?
+                };
+                let m = compute::import_compute(&config_dir, &raw)?;
+                println!(
+                    "imported {} — run: grid compute start {}",
+                    m.name, m.name
+                );
+            }
+        },
+
         Commands::Node {
             coordinator,
             id,
@@ -318,12 +544,11 @@ async fn main() -> Result<()> {
             banner::print_mark();
             println!();
             let cfg = load_cfg(&config_dir, coordinator, id, class, gpu, poll_ms)?;
-            // Pass config dir for earn mirror / operator pub
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_node(cfg).await?;
         }
 
-        Commands::Start { coordinator } | Commands::Mine { coordinator } => {
+        Commands::Start { coordinator } => {
             banner::print_mark();
             println!();
             let cfg = load_cfg(&config_dir, coordinator, None, None, None, None)?;
@@ -339,13 +564,19 @@ async fn main() -> Result<()> {
         } => {
             let client = CoordinatorClient::new(&coordinator);
             let payload = if payload.is_empty() && job == "blake3_work" {
-                // Unique seed so work is real and non-colliding
                 format!(
                     "submit:{}:{}|{}",
                     chrono::Utc::now().timestamp(),
                     &uuid::Uuid::new_v4().to_string()[..8],
                     grid::executor::DEFAULT_BLAKE3_ITERS
                 )
+            } else if payload.is_empty() && (job == "container_work" || job == "container" || job == "host") {
+                serde_json::json!({
+                    "image": "alpine:3.20",
+                    "cmd": ["echo", format!("host-{}", &uuid::Uuid::new_v4().to_string()[..8])],
+                    "timeoutSec": 60
+                })
+                .to_string()
             } else if payload.is_empty() {
                 "grid".into()
             } else {
@@ -377,6 +608,9 @@ async fn main() -> Result<()> {
             println!();
             println!("GRID v{}  ·  Phase 1", env!("CARGO_PKG_VERSION"));
             println!("{}", TransactSecurityLayer::default().describe());
+            println!("Registry: {}", grid::mesh_ping::registry_url());
+            println!("Tracks:   host = useful containers (higher earn)");
+            println!("          mine = PoR security (slower earn)");
             let path = NodeConfig::path_in(&config_dir);
             if path.exists() {
                 let c = NodeConfig::load(&path)?;
@@ -386,12 +620,30 @@ async fn main() -> Result<()> {
             } else {
                 println!("Node:   not initialized — grid init --name my-node");
             }
+            let computes = compute::list_computes(&config_dir).unwrap_or_default();
+            if computes.is_empty() {
+                println!("Computes: (none) — grid launch <name>");
+            } else {
+                println!(
+                    "Computes: {}",
+                    computes
+                        .iter()
+                        .map(|c| c.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             let ledger = EarnLedger::load(&EarnLedger::path_in(&config_dir)).unwrap_or_default();
             if !ledger.balances.is_empty() {
                 println!("Earn:   (local) {:?}", ledger.balances);
             }
             println!();
             resources::print_summary()?;
+        }
+
+        Commands::Registry { url, json } => {
+            let snap = grid::mesh_ping::fetch_registry(url.as_deref()).await?;
+            grid::mesh_ping::print_registry(&snap, json)?;
         }
 
         Commands::Resources => resources::print_summary()?,
