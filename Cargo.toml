@@ -1,6 +1,6 @@
 [package]
 name = "grid"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2021"
 authors = ["GRID Contributors"]
 description = "GRID Phase 1 — useful mining CLI (Bitcoin TSL, PoR earn)"
@@ -56,6 +56,8 @@ tempfile = "3.10"
 
 [profile.release]
 opt-level = 3
-lto = true
+# ThinLTO keeps production whole-program optimization while allowing native
+# macOS, Linux, and Windows release builds to complete reliably in CI.
+lto = "thin"
 codegen-units = 1
 strip = true
