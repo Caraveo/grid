@@ -224,10 +224,10 @@ enum Commands {
         action: Option<AuthCmd>,
     },
 
-    /// Earn balances + Bitcoin TSL exit reminder
+    /// GRID wallet (`grid0…` addresses) — claim / send / receive
     Wallet {
-        #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
-        coordinator: String,
+        #[command(subcommand)]
+        action: Option<WalletCmd>,
     },
 
     /// Public mesh registry (default: https://grid-compute.com)
@@ -394,6 +394,53 @@ enum ComputeCmd {
     /// Import manifest JSON from file or stdin (-)
     Import {
         path: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WalletCmd {
+    /// Create wallet from operator key → grid0 address
+    Init,
+    /// Show status, balances, unclaimed mint + burn warnings
+    Status,
+    /// Print your grid0 receive address
+    Address,
+    /// Move unclaimed node mint into your grid0 wallet (before 1y burn)
+    Claim {
+        /// Optional max amount to claim
+        #[arg(long)]
+        amount: Option<f64>,
+    },
+    /// Send GRID to another grid0 address
+    Send {
+        /// Destination grid0 address
+        to: String,
+        /// Amount of GRID
+        amount: f64,
+        /// Optional memo
+        #[arg(long)]
+        memo: Option<String>,
+    },
+    /// Show receive address (inbound credits land after claim or receive-tx)
+    Receive,
+    /// Import a signed send tx JSON file addressed to you
+    ReceiveTx {
+        /// Path to tx JSON (- for stdin)
+        path: String,
+        /// Sender operator pubkey hex (required to verify)
+        #[arg(long)]
+        from_pubkey: Option<String>,
+    },
+    /// Recent wallet transactions
+    History {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Report / apply **on-chain protocol burns** (blockchain rule, not wallet)
+    BurnCheck {
+        /// Only report, do not write burns
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -750,6 +797,7 @@ async fn main() -> Result<()> {
             println!("GRID v{}  ·  Phase 1", env!("CARGO_PKG_VERSION"));
             println!("{}", TransactSecurityLayer::default().describe());
             println!("Registry: {}", grid::mesh_ping::registry_url());
+            println!("Config:   {}", config_dir.display());
             println!("Tracks:   host = useful containers (higher earn)");
             println!("          mine = PoR security (slower earn)");
             let path = NodeConfig::path_in(&config_dir);
@@ -778,6 +826,10 @@ async fn main() -> Result<()> {
             if !ledger.balances.is_empty() {
                 println!("Earn:   (local) {:?}", ledger.balances);
             }
+
+            // Blockchain size + local security audit
+            grid::chain::print_status_blockchain(&config_dir);
+
             println!();
             resources::print_summary()?;
         }
@@ -875,43 +927,8 @@ async fn main() -> Result<()> {
             run_auth(&config_dir, action).await?;
         }
 
-        Commands::Wallet { coordinator } => {
-            let tsl = TransactSecurityLayer::default();
-            println!("GRID wallet · pilot earn ledger");
-            println!("  {}", tsl.describe());
-            println!("  Exit path: GRID credits → BTC (Transact Security Layer)");
-            let path = NodeConfig::path_in(&config_dir);
-            let node_id = if path.exists() {
-                let c = NodeConfig::load(&path)?;
-                println!("  Node:   {} ({})", c.name, c.node_id);
-                Some(c.node_id)
-            } else {
-                None
-            };
-            let local = EarnLedger::load(&EarnLedger::path_in(&config_dir)).unwrap_or_default();
-            if let Some(ref id) = node_id {
-                println!("  Local:  {:.6} credits", local.balance(id));
-            }
-            println!("  Minted: {:.6} (local mirror)", local.total_minted);
-            let client = CoordinatorClient::new(&coordinator);
-            match client.stats().await {
-                Ok(s) => {
-                    if let Some(tm) = s.get("totalMinted").and_then(|v| v.as_f64()) {
-                        println!("  Coord:  totalMinted={tm:.6}");
-                    }
-                    if let Some(nodes) = s.get("nodes").and_then(|v| v.as_array()) {
-                        for n in nodes {
-                            let id = n.get("nodeId").and_then(|v| v.as_str()).unwrap_or("?");
-                            let earn = n.get("earnTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let done = n.get("jobsDone").and_then(|v| v.as_u64()).unwrap_or(0);
-                            println!("  · {id}  earn={earn:.4}  jobs_done={done}");
-                        }
-                    }
-                }
-                Err(e) => println!("  Coord:  offline ({e})"),
-            }
-            println!("\n  On-rail Genesis Earn + BTC exit ships when emission is public.");
-            println!("  Until then this ledger is real accounting for verified PoR work.");
+        Commands::Wallet { action } => {
+            run_wallet(&config_dir, action.unwrap_or(WalletCmd::Status)).await?;
         }
 
         Commands::Claim { realm, status, json } => {
@@ -1162,6 +1179,101 @@ async fn main() -> Result<()> {
         },
     }
 
+    Ok(())
+}
+
+async fn run_wallet(config_dir: &PathBuf, action: WalletCmd) -> Result<()> {
+    use grid::address::is_valid_address;
+    use grid::chain::{ChainState, MAX_SUPPLY};
+    use grid::wallet::{
+        burn_check, claim_to_wallet, print_burn_banner, print_history, print_status, receive_tx,
+        send, wallet_init, WalletMeta, CLAIM_DEADLINE_DAYS,
+    };
+
+    match action {
+        WalletCmd::Init => {
+            print_burn_banner();
+            let w = wallet_init(config_dir).await?;
+            println!("✓ wallet keys bound to chain");
+            println!("  address: {}", w.address);
+            println!("  meta:    {}", config_dir.join("wallet.json").display());
+            println!("  chain:   {}", config_dir.join("chain.json").display());
+            println!();
+            println!("Balances & burns live on the **blockchain** (chain.json).");
+            println!("Unclaimed mint burns after {CLAIM_DEADLINE_DAYS}d via protocol — not wallet.");
+            println!("  grid wallet claim");
+        }
+        WalletCmd::Status => {
+            print_status(config_dir)?;
+        }
+        WalletCmd::Address => {
+            let w = WalletMeta::load(config_dir)?;
+            println!("{}", w.address);
+            if !is_valid_address(&w.address) {
+                anyhow::bail!("stored address failed validation");
+            }
+            let chain = ChainState::load(config_dir)?;
+            println!("# on-chain balance: {:.6} GRID", chain.balance(&w.address));
+            println!("# claim unclaimed mint: grid wallet claim");
+            println!("# protocol burns unclaimed lots after {CLAIM_DEADLINE_DAYS}d (chain rule)");
+        }
+        WalletCmd::Claim { amount } => {
+            print_burn_banner();
+            let claimed = claim_to_wallet(config_dir, amount).await?;
+            let w = WalletMeta::load(config_dir)?;
+            let chain = ChainState::load(config_dir)?;
+            println!("✓ claimed {claimed:.6} GRID on-chain → {}", w.address);
+            println!("  on-chain balance: {:.6} GRID", chain.balance(&w.address));
+        }
+        WalletCmd::Send { to, amount, memo } => {
+            print_burn_banner();
+            let tx = send(config_dir, &to, amount, memo).await?;
+            println!("✓ on-chain send {:.6} GRID", tx.amount);
+            println!("  id:   {}", tx.id);
+            println!("  from: {}", tx.from.as_deref().unwrap_or("-"));
+            println!("  to:   {}", tx.to.as_deref().unwrap_or("-"));
+            println!();
+            println!("Counterparty: grid wallet receive-tx <tx.json> --from-pubkey <pk>");
+        }
+        WalletCmd::Receive => {
+            print_burn_banner();
+            let w = WalletMeta::load(config_dir)?;
+            let chain = ChainState::load(config_dir)?;
+            println!("Receive address (grid0):");
+            println!("  {}", w.address);
+            println!("  on-chain: {:.6} GRID", chain.balance(&w.address));
+            println!();
+            println!("  1) grid wallet claim        — unclaimed mint → your account (chain)");
+            println!("  2) grid wallet receive-tx   — import signed send");
+            println!();
+            println!("Burn is chain protocol only (unclaimed lots >{CLAIM_DEADLINE_DAYS}d).");
+            println!("Prefer exit to BTC / fiat.");
+        }
+        WalletCmd::ReceiveTx { path, from_pubkey } => {
+            let raw = if path == "-" {
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)?;
+                s
+            } else {
+                std::fs::read_to_string(&path)?
+            };
+            let tx: grid::wallet::WalletTx = serde_json::from_str(&raw)?;
+            receive_tx(config_dir, tx, from_pubkey.as_deref())?;
+            let w = WalletMeta::load(config_dir)?;
+            let chain = ChainState::load(config_dir)?;
+            println!("✓ receive applied on-chain");
+            println!("  balance: {:.6} GRID", chain.balance(&w.address));
+        }
+        WalletCmd::History { limit } => {
+            print_history(config_dir, limit)?;
+        }
+        WalletCmd::BurnCheck { dry_run } => {
+            print_burn_banner();
+            println!("Protocol burns execute on the **blockchain** (not wallet/node).");
+            println!("Hard cap: {MAX_SUPPLY:.0} GRID");
+            let _ = burn_check(config_dir, dry_run)?;
+        }
+    }
     Ok(())
 }
 

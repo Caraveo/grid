@@ -27,6 +27,12 @@ pub struct PeerOptions {
     pub genesis_url: Option<String>,
     /// Expected genesis pubkey hex (trust anchor).
     pub genesis_pubkey: Option<String>,
+    /// 128-hex GP id for this peer (optional).
+    pub gp_id: Option<String>,
+    /// Realm this peer serves (optional).
+    pub realm: Option<String>,
+    /// Operator pubkey hex (optional).
+    pub pubkey_hex: Option<String>,
 }
 
 #[derive(Clone)]
@@ -37,6 +43,8 @@ struct PeerMeta {
     class: String,
     score: f64,
     rtt_ms: Option<f64>,
+    gp_id: Option<String>,
+    realm: Option<String>,
 }
 
 struct State {
@@ -91,6 +99,12 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
     println!("  name     {}", opts.name);
     println!("  class    {}", opts.class);
     println!("  score    {:.1}", opts.score);
+    if let Some(ref g) = opts.gp_id {
+        println!("  gp_id    {}…", &g[..g.len().min(16)]);
+    }
+    if let Some(ref r) = opts.realm {
+        println!("  realm    grid://{r}.grid");
+    }
     if !opts.connect.is_empty() {
         println!("  dial     {}", opts.connect.join(", "));
     }
@@ -159,8 +173,13 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
                             .rtt_ms
                             .map(|r| format!("{r:.1} ms"))
                             .unwrap_or_else(|| "—".into());
+                        let realm = p
+                            .realm
+                            .as_deref()
+                            .map(|r| format!(" grid://{r}.grid"))
+                            .unwrap_or_default();
                         println!(
-                            "       · {} ({}) class={} score={:.0} rtt={} @ {}",
+                            "       · {} ({}) class={} score={:.0} rtt={} @ {}{realm}",
                             p.name, p.node_id, p.class, p.score, rtt, p.listen
                         );
                     }
@@ -223,6 +242,9 @@ async fn handle_connection(
         &opts.listen,
         &opts.class,
         opts.score,
+        opts.gp_id.clone(),
+        opts.realm.clone(),
+        opts.pubkey_hex.clone(),
     ))
     .await
     .ok();
@@ -277,6 +299,9 @@ async fn handle_connection(
                 listen,
                 class,
                 score,
+                gp_id,
+                realm,
+                pubkey_hex: _,
             } => {
                 if protocol != super::protocol::PROTOCOL {
                     warn!("peer protocol mismatch: {protocol}");
@@ -296,8 +321,12 @@ async fn handle_connection(
                         break;
                     }
                 }
+                let realm_s = realm
+                    .as_deref()
+                    .map(|r| format!(" realm=grid://{r}.grid"))
+                    .unwrap_or_default();
                 println!(
-                    "[p2p] {dir} hello {name} ({node_id}) class={class} score={score:.0} listen={listen}"
+                    "[p2p] {dir} hello {name} ({node_id}) class={class} score={score:.0} listen={listen}{realm_s}"
                 );
                 peer_key = if listen.is_empty() {
                     normalize_addr(&remote_label)
@@ -318,6 +347,8 @@ async fn handle_connection(
                             class,
                             score,
                             rtt_ms: None,
+                            gp_id,
+                            realm,
                         },
                     );
                 }
@@ -361,6 +392,96 @@ async fn handle_connection(
                 if new > 0 {
                     println!("[p2p] learned {new} new peer address(es)");
                 }
+            }
+            Message::Find {
+                nonce,
+                gp_id,
+                realm,
+            } => {
+                // Answer from local knowledge (self + peers)
+                let mut hits: Vec<(String, String, String, Option<String>, Option<String>)> =
+                    Vec::new();
+                // Self match
+                let self_match = match (&gp_id, &realm, &opts.gp_id, &opts.realm) {
+                    (Some(q), _, Some(mine), _) if q == mine => true,
+                    (_, Some(q), _, Some(mine)) if q.eq_ignore_ascii_case(mine) => true,
+                    _ => false,
+                };
+                if self_match {
+                    hits.push((
+                        opts.node_id.clone(),
+                        opts.name.clone(),
+                        opts.listen.clone(),
+                        opts.gp_id.clone(),
+                        opts.realm.clone(),
+                    ));
+                }
+                {
+                    let s = state.lock();
+                    for p in s.peers.values() {
+                        let ok = match (&gp_id, &realm) {
+                            (Some(q), _) => p.gp_id.as_ref() == Some(q),
+                            (_, Some(q)) => p
+                                .realm
+                                .as_ref()
+                                .map(|r| r.eq_ignore_ascii_case(q))
+                                .unwrap_or(false),
+                            _ => false,
+                        };
+                        if ok {
+                            hits.push((
+                                p.node_id.clone(),
+                                p.name.clone(),
+                                p.listen.clone(),
+                                p.gp_id.clone(),
+                                p.realm.clone(),
+                            ));
+                        }
+                    }
+                }
+                for (node_id, name, listen, g, r) in hits {
+                    tx.send(Message::Found {
+                        nonce,
+                        gp_id: g,
+                        realm: r,
+                        node_id,
+                        name,
+                        listen,
+                    })
+                    .await
+                    .ok();
+                }
+            }
+            Message::Found {
+                nonce,
+                gp_id,
+                realm,
+                node_id,
+                name,
+                listen,
+            } => {
+                let a = normalize_addr(&listen);
+                {
+                    let mut s = state.lock();
+                    s.known_addrs.insert(a.clone());
+                    s.peers.entry(a.clone()).or_insert(PeerMeta {
+                        node_id: node_id.clone(),
+                        name: name.clone(),
+                        listen: a.clone(),
+                        class: "S".into(),
+                        score: 0.0,
+                        rtt_ms: None,
+                        gp_id: gp_id.clone(),
+                        realm: realm.clone(),
+                    });
+                }
+                let r = realm
+                    .as_deref()
+                    .map(|x| format!("grid://{x}.grid"))
+                    .unwrap_or_else(|| "—".into());
+                println!(
+                    "[p2p] found nonce={nonce} {name} ({node_id}) @ {a} · {r}"
+                );
             }
         }
     }

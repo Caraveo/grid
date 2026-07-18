@@ -29,6 +29,7 @@ use crate::por::{
     NodeScore,
 };
 use crate::protocol::{result_commitment, Job, JobKind, JobTrack, NodeInfo};
+use crate::chain::{ChainState, MAX_SUPPLY};
 use crate::tsl::TransactSecurityLayer;
 
 /// Credits per verified **mine** (PoR / transactional security) event — slower earn.
@@ -562,16 +563,26 @@ async fn complete_job(
         } else {
             POR_EVENT_MINT
         };
-        earn = credit_event(&mut g, &body.node_id, pool);
-        g.earn.credit_job(
-            &body.node_id,
-            &body.job_id,
-            earn,
-            &commit,
-            Utc::now().to_rfc3339(),
-        );
-        if let Some(node) = g.nodes.get_mut(&body.node_id) {
-            node.earn_total += earn;
+        let raw = credit_event(&mut g, &body.node_id, pool);
+        // On-chain mint (unclaimed). Protocol burns live on the chain, not node/wallet.
+        let root = app
+            .data_dir
+            .parent()
+            .unwrap_or(app.data_dir.as_path());
+        let mut chain = ChainState::load(root).unwrap_or_default();
+        earn = chain.mint_unclaimed(&body.node_id, &body.job_id, raw, &commit);
+        let _ = chain.save(root);
+        if earn > 0.0 {
+            g.earn.credit_job(
+                &body.node_id,
+                &body.job_id,
+                earn,
+                &commit,
+                Utc::now().to_rfc3339(),
+            );
+            if let Some(node) = g.nodes.get_mut(&body.node_id) {
+                node.earn_total += earn;
+            }
         }
     }
 
@@ -675,6 +686,7 @@ async fn stats(State(app): State<App>) -> impl IntoResponse {
         "verifiedJobs": verified,
         "totalJobs": g.jobs.len(),
         "totalMinted": g.earn.total_minted,
+        "maxSupply": MAX_SUPPLY,
         "jobs": jobs,
         "nodes": nodes,
     }))

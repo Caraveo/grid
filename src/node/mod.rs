@@ -258,14 +258,26 @@ async fn run_operator(
 }
 
 fn mirror_earn(config_dir: &Path, node_id: &str, job_id: &str, earn: f64, commit: &str) {
-    let path = EarnLedger::path_in(config_dir);
-    let mut ledger = EarnLedger::load(&path).unwrap_or_default();
-    ledger.credit_job(
-        node_id,
-        job_id,
-        earn,
-        commit,
-        chrono::Utc::now().to_rfc3339(),
-    );
-    let _ = ledger.save(&path);
+    // Mint is ON-CHAIN (unclaimed lot). Burn is chain protocol — not node logic.
+    use crate::chain::ChainState;
+    let mut chain = ChainState::load(config_dir).unwrap_or_default();
+    let actual = chain.mint_unclaimed(node_id, job_id, earn, commit);
+    if actual > 0.0 {
+        let _ = chain.save(config_dir);
+        // mirror thin earn.json for older tools
+        let path = EarnLedger::path_in(config_dir);
+        let mut ledger = EarnLedger::load(&path).unwrap_or_default();
+        ledger.credit_job(
+            node_id,
+            job_id,
+            actual,
+            commit,
+            chrono::Utc::now().to_rfc3339(),
+        );
+        let _ = ledger.save(&path);
+    } else if earn > 0.0 {
+        tracing::warn!(
+            "on-chain mint blocked (10B cap or duplicate job) — claim/exit so protocol burns free headroom job={job_id}"
+        );
+    }
 }

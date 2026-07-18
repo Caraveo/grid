@@ -9,6 +9,11 @@
   Run a node. Do real work. Earn <strong>GRID</strong>. Cash out toward <strong>Bitcoin</strong>.
 </p>
 
+[![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
+[![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
+
 <p align="center">
   <em>Bitcoin is the Transact Security Layer</em> — GRID meters compute; BTC secures value.
 </p>

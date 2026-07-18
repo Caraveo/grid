@@ -13,6 +13,15 @@ pub enum Message {
         class: String,
         #[serde(default)]
         score: f64,
+        /// 128-hex GP id (optional for legacy peers)
+        #[serde(default)]
+        gp_id: Option<String>,
+        /// Realm label (optional)
+        #[serde(default)]
+        realm: Option<String>,
+        /// Operator pubkey hex (optional)
+        #[serde(default)]
+        pubkey_hex: Option<String>,
     },
     Ping {
         nonce: u64,
@@ -28,10 +37,39 @@ pub enum Message {
     Peers {
         addrs: Vec<String>,
     },
+    /// Request dial info for a GP id or realm.
+    Find {
+        /// Query nonce for matching Found
+        nonce: u64,
+        #[serde(default)]
+        gp_id: Option<String>,
+        #[serde(default)]
+        realm: Option<String>,
+    },
+    /// Response to Find (may be multi-valued via multiple Found messages).
+    Found {
+        nonce: u64,
+        #[serde(default)]
+        gp_id: Option<String>,
+        #[serde(default)]
+        realm: Option<String>,
+        node_id: String,
+        name: String,
+        listen: String,
+    },
 }
 
 impl Message {
-    pub fn hello(node_id: &str, name: &str, listen: &str, class: &str, score: f64) -> Self {
+    pub fn hello(
+        node_id: &str,
+        name: &str,
+        listen: &str,
+        class: &str,
+        score: f64,
+        gp_id: Option<String>,
+        realm: Option<String>,
+        pubkey_hex: Option<String>,
+    ) -> Self {
         Self::Hello {
             protocol: PROTOCOL.into(),
             node_id: node_id.into(),
@@ -39,6 +77,9 @@ impl Message {
             listen: listen.into(),
             class: class.into(),
             score,
+            gp_id,
+            realm,
+            pubkey_hex,
         }
     }
 }

@@ -1,16 +1,16 @@
-//! Public exposure hints (cloudflared when present).
+//! Public exposure hints — P2P mesh first; tunnels are last resort.
 
 use std::process::Command;
 
-/// Hint for public computes — prefer cloudflared, else localhost note.
+/// Hint for public computes. Prefer GRID P2P peer announce; cloudflared only if needed.
 pub fn public_endpoint_hint(port: u16) -> String {
     if which("cloudflared") {
         format!(
-            "public: run `cloudflared tunnel --url http://127.0.0.1:{port}` (or wire named tunnel)"
+            "prefer: grid peer (P2P data plane) · last-resort tunnel: `cloudflared tunnel --url http://127.0.0.1:{port}`"
         )
     } else {
         format!(
-            "public: bind service on 127.0.0.1:{port}; install cloudflared for HTTPS tunnel (default public mode)"
+            "prefer: grid peer / P2P mesh for reachability · local service 127.0.0.1:{port} (cloudflared optional last resort)"
         )
     }
 }
