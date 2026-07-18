@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::chain::{ChainState, ChainTx, MAX_SUPPLY};
 use crate::crypto::blake3_hex;
 use crate::genesis::GenesisKeys;
+use crate::por::{allocate_inclusion, allocate_proportional, split_emission, NodeScore};
 
 const BLOCKS_FILE: &str = "blocks.json";
 const DOMAIN: &str = "GRID-BLOCK-v1";
@@ -28,7 +29,79 @@ pub struct Block {
     pub leader_pubkey: String,
     pub state_root: String,
     pub transactions: Vec<ChainTx>,
+    #[serde(default)]
+    pub settlements: Vec<Settlement>,
     pub signature: String,
+}
+
+/// Complete, replayable reward calculation committed into a signed block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settlement {
+    pub job_id: String,
+    pub track: String,
+    pub pool: f64,
+    pub nodes: Vec<SettlementNode>,
+    pub allocations: Vec<SettlementAllocation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementNode {
+    pub node_id: String,
+    pub cluster_id: String,
+    pub score: f64,
+    pub class_s: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementAllocation {
+    pub node_id: String,
+    pub amount: f64,
+}
+
+impl Settlement {
+    /// Replica-side deterministic replay. No coordinator amount is trusted.
+    pub fn verify(&self) -> Result<()> {
+        if self.pool <= 0.0 || !self.pool.is_finite() || self.nodes.is_empty() {
+            bail!("invalid settlement inputs");
+        }
+        let scores: Vec<NodeScore> = self
+            .nodes
+            .iter()
+            .map(|n| NodeScore {
+                node_id: n.node_id.clone(),
+                cluster_id: n.cluster_id.clone(),
+                score: n.score,
+                class_s: n.class_s,
+            })
+            .collect();
+        let (prop, inclusion) = split_emission(self.pool);
+        let mut expected = std::collections::BTreeMap::<String, f64>::new();
+        for (id, amount) in allocate_proportional(&scores, prop) {
+            *expected.entry(id).or_default() += amount;
+        }
+        for (id, amount) in allocate_inclusion(&scores, inclusion) {
+            *expected.entry(id).or_default() += amount;
+        }
+        let mut supplied = std::collections::BTreeMap::<String, f64>::new();
+        for a in &self.allocations {
+            if a.amount < 0.0 || !a.amount.is_finite() {
+                bail!("invalid allocation");
+            }
+            *supplied.entry(a.node_id.clone()).or_default() += a.amount;
+        }
+        if expected.len() != supplied.len() {
+            bail!("settlement allocation members mismatch");
+        }
+        for (id, amount) in expected {
+            if (supplied.get(&id).copied().unwrap_or(-1.0) - amount).abs() > 1e-8 {
+                bail!("settlement allocation mismatch for {id}");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +245,7 @@ fn signed_block(
         leader_pubkey: keys.public_hex(),
         state_root: state_root(state)?,
         transactions,
+        settlements: vec![],
         signature: String::new(),
     };
     b.signature = keys.sign(&signing_bytes(&b)?);
@@ -190,6 +264,9 @@ pub fn verify_block(block: &Block) -> Result<()> {
     VerifyingKey::from_bytes(&key)?
         .verify(&signing_bytes(block)?, &Signature::from_bytes(&sig))
         .map_err(|_| anyhow::anyhow!("invalid block signature"))?;
+    for settlement in &block.settlements {
+        settlement.verify()?;
+    }
     Ok(())
 }
 
