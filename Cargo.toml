@@ -46,6 +46,9 @@ bip39 = "2"
 webauthn-rs = { version = "0.5", default-features = true, features = [
   "danger-allow-state-serialisation",
 ] }
+# Vendored OpenSSL so cross-builds (darwin-aarch64, linux) don't need a host sysroot.
+# Pulled transitively by webauthn-rs; explicit feature forces static openssl.
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 tempfile = "3.10"

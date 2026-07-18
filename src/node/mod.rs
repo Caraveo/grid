@@ -38,6 +38,11 @@ pub async fn run_mine(cfg: NodeConfig) -> Result<()> {
     run_operator(cfg, OperatorMode::Mine, None).await
 }
 
+/// **Ember** — host + mine for a named compute/realm (registry announce is done by `grid ember --start`).
+pub async fn run_ember(cfg: NodeConfig, compute_name: Option<String>) -> Result<()> {
+    run_operator(cfg, OperatorMode::Both, compute_name).await
+}
+
 async fn run_operator(
     cfg: NodeConfig,
     mode: OperatorMode,

@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! grid launch garage --public   # name a compute
+//! grid claim fire               # claim realm (passkey + operator key)
 //! grid host                     # pull useful work · higher earn
 //! grid mine                     # PoR security work · slower earn
 //! grid coord                    # coordinator
@@ -229,6 +230,51 @@ enum Commands {
         #[arg(long, env = "GRID_REGISTRY_URL")]
         url: Option<String>,
         /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Claim a mesh realm (`grid://name.grid`) with IdentityKey + operator Ed25519
+    Claim {
+        /// Realm to claim: fire | fire.grid | grid://fire.grid
+        /// Use `list` to show local claims.
+        realm: String,
+        /// Show claim status only (no new claim ceremony)
+        #[arg(long)]
+        status: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Ember = host + mine + compute + registry for a realm (e.g. fire.grid)
+    Ember {
+        /// Realm / compute name: fire | fire.grid | grid://fire.grid
+        name: String,
+        /// Announce to registry + start host+mine for this compute
+        #[arg(long)]
+        start: bool,
+        /// Emit JSON status
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Paid registry activation — Cash App $5 → $Caraveo (exact note). Donations accepted.
+    Register {
+        /// Realm name to activate on registry.grid
+        name: String,
+        /// Human label
+        #[arg(long)]
+        label: Option<String>,
+        /// After Cash App payment, submit for review
+        #[arg(long)]
+        confirm: bool,
+        /// Optional Cash App confirmation text
+        #[arg(long)]
+        cash_confirm: Option<String>,
+        /// Status only (no new registration)
+        #[arg(long)]
+        status: bool,
         #[arg(long)]
         json: bool,
     },
@@ -778,6 +824,187 @@ async fn main() -> Result<()> {
             }
             println!("\n  On-rail Genesis Earn + BTC exit ships when emission is public.");
             println!("  Until then this ledger is real accounting for verified PoR work.");
+        }
+
+        Commands::Claim { realm, status, json } => {
+            banner::print_mark();
+            println!();
+            let realm_l = realm.trim().to_lowercase();
+            if realm_l == "list" || realm_l == "ls" {
+                if json {
+                    let items = grid::claim::list_claims(&config_dir)?;
+                    println!("{}", serde_json::to_string_pretty(&items)?);
+                } else {
+                    grid::claim::print_list(&config_dir)?;
+                }
+            } else if status || realm_l == "status" {
+                // `grid claim status fire` not supported as two args; use --status
+                let name = if realm_l == "status" {
+                    anyhow::bail!("usage: grid claim <realm> --status");
+                } else {
+                    realm
+                };
+                let claim = grid::claim::load_claim(&config_dir, &name)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&claim)?);
+                } else {
+                    grid::claim::print_claim(&claim);
+                }
+            } else {
+                // Availability hint (non-fatal)
+                match grid::claim::check_registry_name(
+                    &grid::claim::normalize_realm(&realm).unwrap_or_else(|_| realm.clone()),
+                )
+                .await
+                {
+                    Ok(v) => {
+                        if let Some(avail) = v.get("available").and_then(|x| x.as_bool()) {
+                            if avail {
+                                println!(
+                                    "registry: name available for registration on registry.grid"
+                                );
+                            } else {
+                                let reason = v
+                                    .get("reason")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("taken");
+                                println!(
+                                    "registry: name already on registry.grid ({reason}) — binding local identity"
+                                );
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+                let claim = grid::claim::claim_realm(&config_dir, &realm).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&claim)?);
+                } else {
+                    println!();
+                    println!("✓ Claimed {}", claim.realm);
+                    grid::claim::print_claim(&claim);
+                    println!();
+                    println!("Next:");
+                    println!("  grid ember {}            # host + mine + compute + registry", claim.name);
+                    println!("  grid ember {} --start", claim.name);
+                    println!("  open grid://{}.grid", claim.name);
+                }
+            }
+        }
+
+        Commands::Ember { name, start, json } => {
+            banner::print_mark();
+            println!();
+            if start {
+                let cfg = load_cfg(&config_dir, None, None, None, None, None)?;
+                grid::ember::start_ember(&config_dir, &name, cfg).await?;
+            } else {
+                let st = grid::ember::status(&config_dir, &name).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&st)?);
+                } else {
+                    grid::ember::print_status(&st);
+                }
+            }
+        }
+
+        Commands::Register {
+            name,
+            label,
+            confirm,
+            cash_confirm,
+            status,
+            json,
+        } => {
+            banner::print_mark();
+            println!();
+            if status {
+                let a = grid::register::fetch_activation(&name).await?;
+                if let Some(local) = grid::register::load_local(&config_dir, &name) {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "activation": a,
+                                "local": local,
+                            }))?
+                        );
+                    } else {
+                        grid::register::print_activation(&a);
+                        println!();
+                        println!("Local registration");
+                        println!("  id     {}", local.reg_id);
+                        println!("  status {}", local.status);
+                        println!("  note   {}", local.payment_note);
+                        if !a.activated {
+                            grid::register::print_pay_instructions(&local);
+                        }
+                    }
+                } else if json {
+                    println!("{}", serde_json::to_string_pretty(&a)?);
+                } else {
+                    grid::register::print_activation(&a);
+                    if !a.activated {
+                        println!();
+                        println!("  Start:  grid register {name}");
+                    }
+                }
+            } else if confirm {
+                let rec = grid::register::confirm_payment(
+                    &config_dir,
+                    &name,
+                    cash_confirm.as_deref(),
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&rec)?);
+                } else {
+                    println!("✓ Payment claimed → pending review");
+                    println!("  name    {}", rec.name);
+                    println!("  id      {}", rec.reg_id);
+                    println!("  status  {}", rec.status);
+                    println!("  note    {}", rec.payment_note);
+                    println!();
+                    println!("  Admin verifies Cash App at {} then activates.", rec.cashtag);
+                    println!("  When active: grid ember {} · grid compute announce", rec.name);
+                    println!("  Donations accepted at {} anytime.", rec.cashtag);
+                }
+            } else {
+                // show activation first if already active
+                let a = grid::register::fetch_activation(&name).await?;
+                if a.activated {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&a)?);
+                    } else {
+                        grid::register::print_activation(&a);
+                        println!();
+                        println!("  Already active — grid ember {name}");
+                    }
+                } else if let Some(local) =
+                    grid::register::load_local(&config_dir, &name)
+                {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&local)?);
+                    } else {
+                        println!("Registration already started for {}", local.name);
+                        grid::register::print_pay_instructions(&local);
+                    }
+                } else {
+                    let rec = grid::register::start_registration(
+                        &config_dir,
+                        &name,
+                        label.as_deref(),
+                    )
+                    .await?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rec)?);
+                    } else {
+                        println!("✓ Registration started for grid://{}.grid", rec.name);
+                        println!("  id  {}", rec.reg_id);
+                        grid::register::print_pay_instructions(&rec);
+                    }
+                }
+            }
         }
     }
 

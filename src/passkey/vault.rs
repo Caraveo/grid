@@ -19,7 +19,7 @@
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -802,6 +802,85 @@ pub async fn require_unlocked(config_dir: &Path, purpose: &str) -> Result<[u8; 3
     println!("Vault locked ({purpose})");
     auth_login(config_dir).await?;
     session_dek(config_dir)?.context("no session after login")
+}
+
+/// Step-up: require an unlocked session **and** a fresh passkey ceremony when one is registered.
+pub async fn require_identity(config_dir: &Path, purpose: &str) -> Result<[u8; 32]> {
+    let dek = require_unlocked(config_dir, purpose).await?;
+    if pstore::has_passkey(config_dir) {
+        ceremony::require_passkey(config_dir, purpose).await?;
+    }
+    Ok(dek)
+}
+
+/// Public operator Ed25519 key (hex), from vault meta or `operator.pub`.
+pub fn operator_pubkey_hex(config_dir: &Path) -> Result<String> {
+    if let Ok(m) = load_meta(config_dir) {
+        if !m.public_key_hex.is_empty() {
+            return Ok(m.public_key_hex);
+        }
+    }
+    let p = p_pub(config_dir);
+    if p.exists() {
+        return Ok(fs::read_to_string(p)?.trim().to_string());
+    }
+    bail!("no operator public key — run: grid auth");
+}
+
+/// Load the operator signing key. `dek` from [`require_unlocked`] / [`require_identity`].
+pub fn load_operator_signing_key(config_dir: &Path, dek: &[u8; 32]) -> Result<SigningKey> {
+    let secret = if p_raw(config_dir).exists() {
+        let raw = fs::read(p_raw(config_dir)).context("read operator.key")?;
+        let arr: [u8; 32] = raw
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("operator.key must be 32 bytes"))?;
+        arr
+    } else if p_enc(config_dir).exists() {
+        let blob = fs::read(p_enc(config_dir)).context("read operator.enc")?;
+        // nocrypt path passes zero DEK — encrypted vaults need a real session DEK
+        if dek.iter().all(|&b| b == 0) {
+            if let Ok(m) = load_meta(config_dir) {
+                if m.mode != "nocrypt" {
+                    bail!("vault locked — grid auth login first");
+                }
+            }
+        }
+        let pt = aes_decrypt(dek, &blob).context("decrypt operator secret")?;
+        let arr: [u8; 32] = pt
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("operator secret must be 32 bytes"))?;
+        arr
+    } else {
+        bail!("no operator key material — run: grid auth");
+    };
+    Ok(SigningKey::from_bytes(&secret))
+}
+
+/// Sign arbitrary message bytes with the operator key. Returns hex signature.
+pub fn sign_operator(config_dir: &Path, dek: &[u8; 32], message: &[u8]) -> Result<String> {
+    let sk = load_operator_signing_key(config_dir, dek)?;
+    let sig: Signature = sk.sign(message);
+    Ok(hex::encode(sig.to_bytes()))
+}
+
+/// Verify an operator signature (hex pubkey + hex sig).
+pub fn verify_operator_sig(pubkey_hex: &str, message: &[u8], sig_hex: &str) -> Result<()> {
+    let pk_bytes = hex::decode(pubkey_hex.trim()).context("decode operator pubkey")?;
+    let arr: [u8; 32] = pk_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("operator pubkey must be 32 bytes"))?;
+    let vk = VerifyingKey::from_bytes(&arr)?;
+    let sig_bytes = hex::decode(sig_hex.trim()).context("decode signature")?;
+    let sarr: [u8; 64] = sig_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))?;
+    let sig = Signature::from_bytes(&sarr);
+    vk.verify(message, &sig)
+        .map_err(|e| anyhow::anyhow!("invalid operator signature: {e}"))
 }
 
 pub async fn auth_delete(config_dir: &Path, wipe_keys: bool) -> Result<()> {

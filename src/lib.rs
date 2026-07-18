@@ -6,7 +6,9 @@
 
 pub mod banner;
 pub mod bench;
+pub mod claim;
 pub mod compute;
+pub mod ember;
 pub mod config;
 pub mod coord;
 pub mod crypto;
@@ -22,6 +24,7 @@ pub mod p2p;
 pub mod passkey;
 pub mod por;
 pub mod protocol;
+pub mod register;
 pub mod resources;
 pub mod tsl;
 
