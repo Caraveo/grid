@@ -25,6 +25,10 @@ use crate::address::{is_valid_address, normalize_address};
 pub const MAX_SUPPLY: f64 = 10_000_000_000.0;
 /// Unclaimed mint older than this is burned by protocol.
 pub const BURN_DEADLINE_DAYS: i64 = 365;
+/// Maximum newly-issued GRID per one-hour protocol epoch until governance
+/// deliberately changes the signed chain configuration.
+pub const DEFAULT_EPOCH_BUDGET: f64 = 10_000.0;
+const EMISSION_EPOCH_SECS: i64 = 3600;
 
 const CHAIN_FILE: &str = "chain.json";
 const MAX_TX: usize = 50_000;
@@ -36,6 +40,12 @@ pub struct ChainState {
     pub max_supply: f64,
     pub total_minted: f64,
     pub total_burned: f64,
+    #[serde(default = "default_epoch_budget")]
+    pub epoch_budget: f64,
+    #[serde(default)]
+    pub emission_epoch: i64,
+    #[serde(default)]
+    pub epoch_minted: f64,
     /// On-chain unclaimed mint lots (not “node storage” — chain records).
     #[serde(default)]
     pub unclaimed: Vec<UnclaimedLot>,
@@ -49,6 +59,8 @@ pub struct ChainState {
     pub settled_jobs: HashMap<String, String>,
     pub updated_at: String,
 }
+
+fn default_epoch_budget() -> f64 { DEFAULT_EPOCH_BUDGET }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +118,9 @@ impl Default for ChainState {
             max_supply: MAX_SUPPLY,
             total_minted: 0.0,
             total_burned: 0.0,
+            epoch_budget: DEFAULT_EPOCH_BUDGET,
+            emission_epoch: Utc::now().timestamp().div_euclid(EMISSION_EPOCH_SECS),
+            epoch_minted: 0.0,
             unclaimed: vec![],
             accounts: HashMap::new(),
             txs: vec![],
@@ -158,6 +173,19 @@ impl ChainState {
 
     pub fn mint_headroom(&self) -> f64 {
         (self.max_supply - self.circulating()).max(0.0)
+    }
+
+    fn refresh_emission_epoch(&mut self) {
+        let current = Utc::now().timestamp().div_euclid(EMISSION_EPOCH_SECS);
+        if self.emission_epoch != current {
+            self.emission_epoch = current;
+            self.epoch_minted = 0.0;
+        }
+    }
+
+    pub fn epoch_headroom(&mut self) -> f64 {
+        self.refresh_emission_epoch();
+        (self.epoch_budget - self.epoch_minted).max(0.0)
     }
 
     pub fn balance(&self, addr: &str) -> f64 {
@@ -225,6 +253,7 @@ impl ChainState {
     ) -> f64 {
         // Always run protocol burns first so headroom can reopen.
         let _ = self.apply_protocol_burns();
+        let epoch_headroom = self.epoch_headroom();
 
         if amount <= 0.0 || !amount.is_finite() {
             return 0.0;
@@ -235,11 +264,12 @@ impl ChainState {
         if self.unclaimed.iter().any(|l| l.job_id == job_id) {
             return 0.0;
         }
-        let actual = amount.min(self.mint_headroom());
+        let actual = amount.min(self.mint_headroom()).min(epoch_headroom);
         if actual <= 0.0 {
             return 0.0;
         }
         self.total_minted += actual;
+        self.epoch_minted += actual;
         let at = now_rfc();
         self.unclaimed.push(UnclaimedLot {
             job_id: job_id.into(),
@@ -458,7 +488,10 @@ pub fn print_supply(chain: &ChainState) {
     println!("  supply cap:    {:.0} GRID", chain.max_supply);
     println!("  circulating:   {:.6}", chain.circulating());
     println!("  minted life:   {:.6}", chain.total_minted);
-    println!("  burned life:   {:.6}  (protocol burns)", chain.total_burned);
+    println!(
+        "  burned life:   {:.6}  (protocol burns)",
+        chain.total_burned
+    );
     println!("  mint headroom: {:.6}", chain.mint_headroom());
     println!("  unclaimed lots:{}", chain.unclaimed.len());
     println!("  accounts:      {}", chain.accounts.len());
@@ -718,9 +751,7 @@ pub fn security_audit(config_dir: &Path) -> Vec<SecFinding> {
         out.push(SecFinding {
             level: SecLevel::Warn,
             code: "txs.cap",
-            message: format!(
-                "tx log at capacity ({MAX_TX}) — oldest txs are pruned on write"
-            ),
+            message: format!("tx log at capacity ({MAX_TX}) — oldest txs are pruned on write"),
         });
     } else {
         out.push(SecFinding {
@@ -739,12 +770,7 @@ pub fn security_audit(config_dir: &Path) -> Vec<SecFinding> {
     });
 
     // --- keys / secrets under config dir ---
-    audit_path_perms(
-        &mut out,
-        config_dir.join("keys"),
-        "keys.dir",
-        true,
-    );
+    audit_path_perms(&mut out, config_dir.join("keys"), "keys.dir", true);
     for name in [
         "keys/admin.secret",
         "keys/ca.seed",
@@ -789,8 +815,8 @@ pub fn security_audit(config_dir: &Path) -> Vec<SecFinding> {
     }
 
     // registry URL should be https
-    let reg = std::env::var("GRID_REGISTRY_URL")
-        .unwrap_or_else(|_| "https://grid-compute.com".into());
+    let reg =
+        std::env::var("GRID_REGISTRY_URL").unwrap_or_else(|_| "https://grid-compute.com".into());
     if reg.starts_with("https://") {
         out.push(SecFinding {
             level: SecLevel::Ok,
@@ -831,12 +857,7 @@ fn audit_path_perms(out: &mut Vec<SecFinding>, path: PathBuf, code: &'static str
         out.push(SecFinding {
             level: SecLevel::Warn,
             code,
-            message: format!(
-                "{} mode {:o} (prefer {:o})",
-                path.display(),
-                mode,
-                want
-            ),
+            message: format!("{} mode {:o} (prefer {:o})", path.display(), mode, want),
         });
     } else {
         out.push(SecFinding {
@@ -848,7 +869,12 @@ fn audit_path_perms(out: &mut Vec<SecFinding>, path: PathBuf, code: &'static str
 }
 
 #[cfg(not(unix))]
-fn audit_path_perms(_out: &mut Vec<SecFinding>, _path: PathBuf, _code: &'static str, _is_dir: bool) {
+fn audit_path_perms(
+    _out: &mut Vec<SecFinding>,
+    _path: PathBuf,
+    _code: &'static str,
+    _is_dir: bool,
+) {
 }
 
 /// Print blockchain size + security section for `grid status`.
@@ -981,11 +1007,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let findings = security_audit(dir.path());
         assert!(
-            findings.iter().any(|f| f.code == "supply.cap" && f.level == SecLevel::Ok),
+            findings
+                .iter()
+                .any(|f| f.code == "supply.cap" && f.level == SecLevel::Ok),
             "{findings:?}"
         );
         assert!(
-            findings.iter().any(|f| f.code == "supply.ledger" && f.level == SecLevel::Ok),
+            findings
+                .iter()
+                .any(|f| f.code == "supply.ledger" && f.level == SecLevel::Ok),
             "{findings:?}"
         );
     }
