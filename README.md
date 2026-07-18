@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -217,7 +217,7 @@ grid genesis serve --bind 127.0.0.1:9100
 grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
 ```
 
-### P2P mesh (minimal TCP)
+### P2P mesh (GP discovery + encrypted transport)
 
 ```bash
 # terminal A
@@ -228,6 +228,12 @@ grid peer --listen 127.0.0.1:9901 --connect 127.0.0.1:9900 --with-bench
 ```
 
 You should see **hello**, **pong rtt=… ms**, and a **peers** list.
+
+Peer discovery uses the existing `grid-compute.com` GP directory when a realm
+is supplied. The directory is a locator only; every TCP session completes a
+Noise XX (`X25519 + ChaChaPoly + BLAKE2s`) handshake before GRID protocol
+messages are sent. Direct peers can still observe each other’s network address;
+an IP-hiding relay is a separate service and is not implied by GP naming.
 
 | Command | What |
 |---------|------|

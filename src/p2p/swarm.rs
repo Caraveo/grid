@@ -33,6 +33,8 @@ pub struct PeerOptions {
     pub realm: Option<String>,
     /// Operator pubkey hex (optional).
     pub pubkey_hex: Option<String>,
+    /// In-memory static key derived after the operator passkey vault is unlocked.
+    pub noise_static_key: [u8; 32],
 }
 
 #[derive(Clone)]
@@ -84,9 +86,7 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
             let mut tick = tokio::time::interval(Duration::from_secs(15));
             loop {
                 tick.tick().await;
-                if let Err(e) =
-                    refresh_truth(&gurl, gpk.as_deref(), &state_t).await
-                {
+                if let Err(e) = refresh_truth(&gurl, gpk.as_deref(), &state_t).await {
                     debug!("genesis truth refresh: {e}");
                 }
             }
@@ -193,8 +193,7 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
         let opts = opts.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, remote.to_string(), opts, state, true).await
-            {
+            if let Err(e) = handle_connection(stream, remote.to_string(), opts, state, true).await {
                 debug!("inbound {remote}: {e}");
             }
         });
@@ -224,13 +223,19 @@ async fn handle_connection(
     inbound: bool,
 ) -> Result<()> {
     stream.set_nodelay(true)?;
+    let (stream, transport) = noise_handshake(stream, inbound, &opts.noise_static_key).await?;
+    let transport = Arc::new(tokio::sync::Mutex::new(transport));
     let (reader, writer) = stream.into_split();
     let (tx, mut rx) = mpsc::channel::<Message>(64);
+    let transport_writer = transport.clone();
 
     let write_task = tokio::spawn(async move {
         let mut writer = writer;
         while let Some(msg) = rx.recv().await {
-            if write_msg(&mut writer, &msg).await.is_err() {
+            if write_msg(&mut writer, &transport_writer, &msg)
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -256,8 +261,7 @@ async fn handle_connection(
         }
     }
 
-    let pending_pings: Arc<Mutex<HashMap<u64, Instant>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let pending_pings: Arc<Mutex<HashMap<u64, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let tx_ping = tx.clone();
     let pending_w = pending_pings.clone();
@@ -283,7 +287,7 @@ async fn handle_connection(
     let mut peer_key = normalize_addr(&remote_label);
 
     loop {
-        let msg = match read_msg(&mut reader).await {
+        let msg = match read_msg(&mut reader, &transport).await {
             Ok(m) => m,
             Err(e) => {
                 debug!("read {peer_key}: {e}");
@@ -315,9 +319,7 @@ async fn handle_connection(
                 {
                     let s = state.lock();
                     if let Some(reason) = s.banned.get(&node_id) {
-                        println!(
-                            "[p2p] REJECT banned peer {name} ({node_id}) reason={reason}"
-                        );
+                        println!("[p2p] REJECT banned peer {name} ({node_id}) reason={reason}");
                         break;
                     }
                 }
@@ -479,9 +481,7 @@ async fn handle_connection(
                     .as_deref()
                     .map(|x| format!("grid://{x}.grid"))
                     .unwrap_or_else(|| "—".into());
-                println!(
-                    "[p2p] found nonce={nonce} {name} ({node_id}) @ {a} · {r}"
-                );
+                println!("[p2p] found nonce={nonce} {name} ({node_id}) @ {a} · {r}");
             }
         }
     }
@@ -498,28 +498,127 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn write_msg<W: AsyncWriteExt + Unpin>(w: &mut W, msg: &Message) -> Result<()> {
+async fn write_msg<W: AsyncWriteExt + Unpin>(
+    w: &mut W,
+    transport: &Arc<tokio::sync::Mutex<snow::TransportState>>,
+    msg: &Message,
+) -> Result<()> {
     let bytes = serde_json::to_vec(msg)?;
     if bytes.len() > 1_000_000 {
         return Err(anyhow!("message too large"));
     }
-    let len = (bytes.len() as u32).to_be_bytes();
+    let mut encrypted = vec![0u8; bytes.len() + 16];
+    let n = transport
+        .lock()
+        .await
+        .write_message(&bytes, &mut encrypted)
+        .map_err(|e| anyhow!("Noise encrypt: {e}"))?;
+    encrypted.truncate(n);
+    let len = (encrypted.len() as u32).to_be_bytes();
     w.write_all(&len).await?;
-    w.write_all(&bytes).await?;
+    w.write_all(&encrypted).await?;
     w.flush().await?;
     Ok(())
 }
 
-async fn read_msg<R: AsyncReadExt + Unpin>(r: &mut R) -> Result<Message> {
+async fn read_msg<R: AsyncReadExt + Unpin>(
+    r: &mut R,
+    transport: &Arc<tokio::sync::Mutex<snow::TransportState>>,
+) -> Result<Message> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len == 0 || len > 1_000_000 {
         return Err(anyhow!("bad frame len {len}"));
     }
-    let mut buf = vec![0u8; len];
-    r.read_exact(&mut buf).await?;
-    Ok(serde_json::from_slice(&buf)?)
+    let mut encrypted = vec![0u8; len];
+    r.read_exact(&mut encrypted).await?;
+    let mut plaintext = vec![0u8; len];
+    let n = transport
+        .lock()
+        .await
+        .read_message(&encrypted, &mut plaintext)
+        .map_err(|e| anyhow!("Noise decrypt: {e}"))?;
+    plaintext.truncate(n);
+    Ok(serde_json::from_slice(&plaintext)?)
+}
+
+/// Noise XX establishes an encrypted, forward-secret session before a single
+/// GRID protocol message is exchanged. The registry only helps locate peers.
+async fn noise_handshake(
+    mut stream: TcpStream,
+    inbound: bool,
+    static_key: &[u8; 32],
+) -> Result<(TcpStream, snow::TransportState)> {
+    const NOISE_PROLOGUE: &[u8] = b"GRID-P2P/2";
+    let params: snow::params::NoiseParams = "Noise_XX_25519_ChaChaPoly_BLAKE2s"
+        .parse()
+        .map_err(|e| anyhow!("Noise parameters: {e}"))?;
+    let builder = snow::Builder::new(params)
+        .prologue(NOISE_PROLOGUE)
+        .local_private_key(static_key);
+    let mut state = if inbound {
+        builder.build_responder()
+    } else {
+        builder.build_initiator()
+    }
+    .map_err(|e| anyhow!("Noise init: {e}"))?;
+
+    let mut out = [0u8; 1024];
+    let mut input = vec![0u8; 1024];
+    if inbound {
+        let n = read_noise_frame(&mut stream, &mut input).await?;
+        state
+            .read_message(&input[..n], &mut out)
+            .map_err(|e| anyhow!("Noise handshake: {e}"))?;
+        let n = state
+            .write_message(&[], &mut out)
+            .map_err(|e| anyhow!("Noise handshake: {e}"))?;
+        write_noise_frame(&mut stream, &out[..n]).await?;
+        let n = read_noise_frame(&mut stream, &mut input).await?;
+        state
+            .read_message(&input[..n], &mut out)
+            .map_err(|e| anyhow!("Noise handshake: {e}"))?;
+    } else {
+        let n = state
+            .write_message(&[], &mut out)
+            .map_err(|e| anyhow!("Noise handshake: {e}"))?;
+        write_noise_frame(&mut stream, &out[..n]).await?;
+        let n = read_noise_frame(&mut stream, &mut input).await?;
+        state
+            .read_message(&input[..n], &mut out)
+            .map_err(|e| anyhow!("Noise handshake: {e}"))?;
+        let n = state
+            .write_message(&[], &mut out)
+            .map_err(|e| anyhow!("Noise handshake: {e}"))?;
+        write_noise_frame(&mut stream, &out[..n]).await?;
+    }
+    let transport = state
+        .into_transport_mode()
+        .map_err(|e| anyhow!("Noise transport: {e}"))?;
+    Ok((stream, transport))
+}
+
+async fn write_noise_frame(stream: &mut TcpStream, body: &[u8]) -> Result<()> {
+    if body.is_empty() || body.len() > 1024 {
+        return Err(anyhow!("bad Noise handshake frame"));
+    }
+    stream.write_all(&(body.len() as u16).to_be_bytes()).await?;
+    stream.write_all(body).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+async fn read_noise_frame(stream: &mut TcpStream, out: &mut Vec<u8>) -> Result<usize> {
+    let mut size = [0u8; 2];
+    stream.read_exact(&mut size).await?;
+    let n = u16::from_be_bytes(size) as usize;
+    if n == 0 || n > 1024 {
+        return Err(anyhow!("bad Noise handshake frame length"));
+    }
+    out.resize(n, 0);
+    stream.read_exact(out).await?;
+    Ok(n)
 }
 
 fn normalize_addr(a: &str) -> String {
@@ -530,13 +629,8 @@ fn addrs_equal(a: &str, b: &str) -> bool {
     normalize_addr(a) == normalize_addr(b)
 }
 
-async fn refresh_truth(
-    url: &str,
-    expected_pubkey: Option<&str>,
-    state: &Shared,
-) -> Result<()> {
-    let truth =
-        crate::genesis::store::fetch_truth(url, expected_pubkey).await?;
+async fn refresh_truth(url: &str, expected_pubkey: Option<&str>, state: &Shared) -> Result<()> {
+    let truth = crate::genesis::store::fetch_truth(url, expected_pubkey).await?;
     let mut s = state.lock();
     if truth.body.epoch < s.truth_epoch {
         // ignore older snapshots (replay)

@@ -1,6 +1,6 @@
 [package]
 name = "grid"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["GRID Contributors"]
 description = "GRID Phase 1 — useful mining CLI (Bitcoin TSL, PoR earn)"
@@ -49,6 +49,7 @@ webauthn-rs = { version = "0.5", default-features = true, features = [
 # Vendored OpenSSL so cross-builds (darwin-aarch64, linux) don't need a host sysroot.
 # Pulled transitively by webauthn-rs; explicit feature forces static openssl.
 openssl = { version = "0.10", features = ["vendored"] }
+snow = "0.9"
 
 [dev-dependencies]
 tempfile = "3.10"

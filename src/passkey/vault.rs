@@ -259,7 +259,11 @@ fn session_dek(c: &Path) -> Result<Option<[u8; 32]>> {
         return Ok(None);
     }
     let b = hex::decode(s.dek_hex)?;
-    Ok(Some(b.as_slice().try_into().map_err(|_| anyhow::anyhow!("bad DEK"))?))
+    Ok(Some(
+        b.as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("bad DEK"))?,
+    ))
 }
 
 pub fn normalize_peer_target(raw: &str) -> String {
@@ -524,7 +528,9 @@ pub async fn auth_login(config_dir: &Path) -> Result<()> {
             );
             let blob = fs::read(p_wrap(config_dir))?;
             let v = aes_decrypt(&wrap, &blob)?;
-            v.as_slice().try_into().map_err(|_| anyhow::anyhow!("DEK"))?
+            v.as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("DEK"))?
         }
         AuthMode::Master => unlock_master(config_dir, &meta).await?,
         AuthMode::Nocrypt => unreachable!(),
@@ -613,7 +619,9 @@ fn unwrap_kdf(c: &Path, meta: &VaultMeta, secret: &str, domain: &str) -> Result<
     let k = kdf(secret, &s, domain);
     let blob = fs::read(p_wrap(c))?;
     let v = aes_decrypt(&k, &blob)?;
-    Ok(v.as_slice().try_into().map_err(|_| anyhow::anyhow!("DEK"))?)
+    Ok(v.as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("DEK"))?)
 }
 
 fn unwrap_passkey_seal(c: &Path) -> Result<[u8; 32]> {
@@ -623,7 +631,9 @@ fn unwrap_passkey_seal(c: &Path) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("seal"))?;
     let blob = fs::read(p_wrap(c))?;
     let v = aes_decrypt(&seal, &blob)?;
-    Ok(v.as_slice().try_into().map_err(|_| anyhow::anyhow!("DEK"))?)
+    Ok(v.as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("DEK"))?)
 }
 
 // ─── Status / delete / unlock gate ──────────────────────────────────────────
@@ -654,9 +664,7 @@ pub fn auth_status(config_dir: &Path) -> AuthStatus {
             "keys: ENCRYPTED (legacy master vault) · session: UNLOCKED · prefer migrate via `grid auth delete --wipe-keys` then `grid auth`"
         )
     } else if mode == "master" {
-        format!(
-            "keys: ENCRYPTED (legacy master vault) · session: LOCKED — grid auth login"
-        )
+        format!("keys: ENCRYPTED (legacy master vault) · session: LOCKED — grid auth login")
     } else if keys_encrypted && session_unlocked {
         format!("keys: ENCRYPTED ({mode}) · session: UNLOCKED")
     } else if keys_encrypted {
@@ -750,6 +758,18 @@ pub fn sign_operator(config_dir: &Path, dek: &[u8; 32], message: &[u8]) -> Resul
     let sk = load_operator_signing_key(config_dir, dek)?;
     let sig: Signature = sk.sign(message);
     Ok(hex::encode(sig.to_bytes()))
+}
+
+/// Derive an in-memory X25519 static secret for the encrypted P2P transport.
+///
+/// It is domain-separated from the Ed25519 signing key and is never persisted.
+/// The caller must first pass the normal vault/passkey unlock gate.
+pub fn p2p_noise_static_key(config_dir: &Path, dek: &[u8; 32]) -> Result<[u8; 32]> {
+    let signing = load_operator_signing_key(config_dir, dek)?;
+    Ok(blake3::derive_key(
+        "GRID P2P Noise static key v1",
+        &signing.to_bytes(),
+    ))
 }
 
 /// Verify an operator signature (hex pubkey + hex sig).

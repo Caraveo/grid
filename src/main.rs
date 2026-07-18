@@ -27,9 +27,7 @@ use grid::tsl::TransactSecurityLayer;
 
 #[derive(Parser)]
 #[command(name = "grid")]
-#[command(
-    about = "GRID — host useful compute · mine security PoR · Bitcoin TSL"
-)]
+#[command(about = "GRID — host useful compute · mine security PoR · Bitcoin TSL")]
 #[command(after_help = banner::BANNER)]
 #[command(author, version)]
 struct Cli {
@@ -51,7 +49,11 @@ enum Commands {
         name: String,
         #[arg(long, default_value = "S")]
         class: String,
-        #[arg(long, default_value = "http://127.0.0.1:8787", env = "GRID_COORDINATOR")]
+        #[arg(
+            long,
+            default_value = "http://127.0.0.1:8787",
+            env = "GRID_COORDINATOR"
+        )]
         coordinator: String,
     },
 
@@ -153,7 +155,11 @@ enum Commands {
         /// blake3_work: seed|iters · container_work: JSON or image|cmd…
         #[arg(long, default_value = "")]
         payload: String,
-        #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
+        #[arg(
+            long,
+            env = "GRID_COORDINATOR",
+            default_value = "http://127.0.0.1:8787"
+        )]
         coordinator: String,
         #[arg(long)]
         wait: bool,
@@ -161,7 +167,11 @@ enum Commands {
 
     /// Coordinator stats + earn
     Stats {
-        #[arg(long, env = "GRID_COORDINATOR", default_value = "http://127.0.0.1:8787")]
+        #[arg(
+            long,
+            env = "GRID_COORDINATOR",
+            default_value = "http://127.0.0.1:8787"
+        )]
         coordinator: String,
     },
 
@@ -354,9 +364,7 @@ enum ComputeCmd {
     /// List computes on this machine
     List,
     /// Status for one compute
-    Status {
-        name: String,
-    },
+    Status { name: String },
     /// Query public compute registry for available capacity (grid-compute.com)
     Available {
         /// Include busy/offline, not only available
@@ -370,17 +378,11 @@ enum ComputeCmd {
     /// Re-announce local computes to the public registry
     Announce,
     /// Stop capacity (keep manifest)
-    Stop {
-        name: String,
-    },
+    Stop { name: String },
     /// Start / re-ready from manifest
-    Start {
-        name: String,
-    },
+    Start { name: String },
     /// Stop and delete local state
-    Destroy {
-        name: String,
-    },
+    Destroy { name: String },
     /// Container logs (if any runtime ids)
     Logs {
         name: String,
@@ -388,13 +390,9 @@ enum ComputeCmd {
         follow: bool,
     },
     /// Export portable manifest JSON (change machines)
-    Export {
-        name: String,
-    },
+    Export { name: String },
     /// Import manifest JSON from file or stdin (-)
-    Import {
-        path: String,
-    },
+    Import { path: String },
 }
 
 #[derive(Subcommand)]
@@ -536,8 +534,7 @@ async fn main() -> Result<()> {
     };
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| filter.into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()),
         )
         .with_target(false)
         .init();
@@ -673,7 +670,10 @@ async fn main() -> Result<()> {
                     ("node_local".into(), "local".into())
                 };
                 compute::announce_computes(&config_dir, &node_id, &label).await;
-                println!("announced local computes → {}", grid::mesh_ping::registry_url());
+                println!(
+                    "announced local computes → {}",
+                    grid::mesh_ping::registry_url()
+                );
                 println!("  check: grid compute available");
             }
             ComputeCmd::Stop { name } => {
@@ -715,10 +715,7 @@ async fn main() -> Result<()> {
                     std::fs::read_to_string(&path)?
                 };
                 let m = compute::import_compute(&config_dir, &raw)?;
-                println!(
-                    "imported {} — run: grid compute start {}",
-                    m.name, m.name
-                );
+                println!("imported {} — run: grid compute start {}", m.name, m.name);
             }
         },
 
@@ -758,7 +755,9 @@ async fn main() -> Result<()> {
                     &uuid::Uuid::new_v4().to_string()[..8],
                     grid::executor::DEFAULT_BLAKE3_ITERS
                 )
-            } else if payload.is_empty() && (job == "container_work" || job == "container" || job == "host") {
+            } else if payload.is_empty()
+                && (job == "container_work" || job == "container" || job == "host")
+            {
                 serde_json::json!({
                     "image": "alpine:3.20",
                     "cmd": ["echo", format!("host-{}", &uuid::Uuid::new_v4().to_string()[..8])],
@@ -903,6 +902,8 @@ async fn main() -> Result<()> {
             } else {
                 (None, None, None)
             };
+            let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted P2P").await?;
+            let noise_static_key = grid::passkey::p2p_noise_static_key(&config_dir, &dek)?;
             let opts = PeerOptions {
                 node_id,
                 name: node_name,
@@ -915,6 +916,7 @@ async fn main() -> Result<()> {
                 gp_id,
                 realm: realm_n,
                 pubkey_hex,
+                noise_static_key,
             };
             run_peer(opts).await?;
         }
@@ -931,7 +933,11 @@ async fn main() -> Result<()> {
             run_wallet(&config_dir, action.unwrap_or(WalletCmd::Status)).await?;
         }
 
-        Commands::Claim { realm, status, json } => {
+        Commands::Claim {
+            realm,
+            status,
+            json,
+        } => {
             banner::print_mark();
             println!();
             let realm_l = realm.trim().to_lowercase();
@@ -969,10 +975,8 @@ async fn main() -> Result<()> {
                                     "registry: name available for registration on registry.grid"
                                 );
                             } else {
-                                let reason = v
-                                    .get("reason")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("taken");
+                                let reason =
+                                    v.get("reason").and_then(|x| x.as_str()).unwrap_or("taken");
                                 println!(
                                     "registry: name already on registry.grid ({reason}) — binding local identity"
                                 );
@@ -990,7 +994,10 @@ async fn main() -> Result<()> {
                     grid::claim::print_claim(&claim);
                     println!();
                     println!("Next:");
-                    println!("  grid ember {}            # host + mine + compute + registry", claim.name);
+                    println!(
+                        "  grid ember {}            # host + mine + compute + registry",
+                        claim.name
+                    );
                     println!("  grid ember {} --start", claim.name);
                     println!("  open grid://{}.grid", claim.name);
                 }
@@ -1055,12 +1062,9 @@ async fn main() -> Result<()> {
                     }
                 }
             } else if confirm {
-                let rec = grid::register::confirm_payment(
-                    &config_dir,
-                    &name,
-                    cash_confirm.as_deref(),
-                )
-                .await?;
+                let rec =
+                    grid::register::confirm_payment(&config_dir, &name, cash_confirm.as_deref())
+                        .await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&rec)?);
                 } else {
@@ -1070,8 +1074,14 @@ async fn main() -> Result<()> {
                     println!("  status  {}", rec.status);
                     println!("  note    {}", rec.payment_note);
                     println!();
-                    println!("  Admin verifies Cash App at {} then activates.", rec.cashtag);
-                    println!("  When active: grid ember {} · grid compute announce", rec.name);
+                    println!(
+                        "  Admin verifies Cash App at {} then activates.",
+                        rec.cashtag
+                    );
+                    println!(
+                        "  When active: grid ember {} · grid compute announce",
+                        rec.name
+                    );
                     println!("  Donations accepted at {} anytime.", rec.cashtag);
                 }
             } else {
@@ -1085,9 +1095,7 @@ async fn main() -> Result<()> {
                         println!();
                         println!("  Already active — grid ember {name}");
                     }
-                } else if let Some(local) =
-                    grid::register::load_local(&config_dir, &name)
-                {
+                } else if let Some(local) = grid::register::load_local(&config_dir, &name) {
                     if json {
                         println!("{}", serde_json::to_string_pretty(&local)?);
                     } else {
@@ -1095,12 +1103,9 @@ async fn main() -> Result<()> {
                         grid::register::print_pay_instructions(&local);
                     }
                 } else {
-                    let rec = grid::register::start_registration(
-                        &config_dir,
-                        &name,
-                        label.as_deref(),
-                    )
-                    .await?;
+                    let rec =
+                        grid::register::start_registration(&config_dir, &name, label.as_deref())
+                            .await?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&rec)?);
                     } else {
@@ -1154,7 +1159,10 @@ async fn main() -> Result<()> {
                 if json {
                     println!("{}", serde_json::to_string_pretty(&s)?);
                 } else {
-                    println!("compliance {}", if s.enabled { "ENABLED" } else { "disabled" });
+                    println!(
+                        "compliance {}",
+                        if s.enabled { "ENABLED" } else { "disabled" }
+                    );
                     if s.enabled {
                         println!("  consent   {}", s.consent_version);
                         println!("  since     {}", s.consented_at);
@@ -1200,7 +1208,9 @@ async fn run_wallet(config_dir: &PathBuf, action: WalletCmd) -> Result<()> {
             println!("  chain:   {}", config_dir.join("chain.json").display());
             println!();
             println!("Balances & burns live on the **blockchain** (chain.json).");
-            println!("Unclaimed mint burns after {CLAIM_DEADLINE_DAYS}d via protocol — not wallet.");
+            println!(
+                "Unclaimed mint burns after {CLAIM_DEADLINE_DAYS}d via protocol — not wallet."
+            );
             println!("  grid wallet claim");
         }
         WalletCmd::Status => {
@@ -1397,7 +1407,11 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             println!("✓ signature valid");
             println!("epoch={} issued={}", t.body.epoch, t.body.issued_at);
             println!("genesis_pubkey={}", t.body.genesis_pubkey);
-            println!("tracked={} banned={}", t.body.tracked.len(), t.body.banned.len());
+            println!(
+                "tracked={} banned={}",
+                t.body.tracked.len(),
+                t.body.banned.len()
+            );
             for b in &t.body.banned {
                 println!("  BAN {} — {}", b.peer_id, b.reason);
             }

@@ -266,7 +266,10 @@ pub async fn register_passkey(config_dir: &std::path::Path) -> Result<()> {
             registered_at: Utc::now().to_rfc3339(),
         },
     )?;
-    println!("✓ Passkey registered under {}", store::store_path(config_dir).display());
+    println!(
+        "✓ Passkey registered under {}",
+        store::store_path(config_dir).display()
+    );
     Ok(())
 }
 
