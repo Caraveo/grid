@@ -23,8 +23,12 @@ pub struct GenesisStore {
 
 impl GenesisStore {
     pub fn open(config_dir: &Path) -> Result<Self> {
+        Self::open_with_keys(config_dir, load_keypair(config_dir)?)
+    }
+
+    /// Open with a protected authority key that was decrypted after vault auth.
+    pub fn open_with_keys(config_dir: &Path, keys: GenesisKeys) -> Result<Self> {
         let path = config_dir.join("genesis").join("truth.json");
-        let keys = load_keypair(config_dir)?;
         let raw = if path.exists() {
             serde_json::from_str(&std::fs::read_to_string(&path)?)?
         } else {

@@ -17,9 +17,10 @@ mod server;
 pub mod store;
 mod truth;
 
-pub use keys::{export_pubkey_hex, generate_keypair, load_keypair, GenesisKeys};
+pub use keys::{
+    export_pubkey_hex, generate_keypair, generate_protected, load_keypair, load_protected,
+    GenesisAuthority, GenesisKeys,
+};
 pub use server::run_genesis_server;
 pub use store::{fetch_truth, GenesisStore};
-pub use truth::{
-    ban_count, is_banned, verify_truth, BanRecord, SignedTruth, TrackedPeer,
-};
+pub use truth::{ban_count, is_banned, verify_truth, BanRecord, SignedTruth, TrackedPeer};

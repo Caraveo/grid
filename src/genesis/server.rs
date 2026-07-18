@@ -12,25 +12,29 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
+use super::keys::GenesisKeys;
 use super::store::GenesisStore;
 use super::truth::TrackedPeer;
 
 /// Server always re-opens store from disk so CLI track/ban is visible immediately.
 struct App {
     config_dir: PathBuf,
+    keys: GenesisKeys,
 }
 
-fn open_store(dir: &PathBuf) -> Result<GenesisStore, StatusCode> {
-    GenesisStore::open(dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+fn open_store(app: &App) -> Result<GenesisStore, StatusCode> {
+    GenesisStore::open_with_keys(&app.config_dir, app.keys.clone())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-pub async fn run_genesis_server(config_dir: PathBuf, bind: &str) -> Result<()> {
-    let store = GenesisStore::open(&config_dir)?;
+pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKeys) -> Result<()> {
+    let store = GenesisStore::open_with_keys(&config_dir, keys.clone())?;
     let pubkey = store.keys().public_hex();
     let epoch = store.epoch();
 
     let app_state = Arc::new(App {
         config_dir: config_dir.clone(),
+        keys,
     });
 
     let app = Router::new()
@@ -62,7 +66,7 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str) -> Result<()> {
 }
 
 async fn health(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = open_store(&app.config_dir)?;
+    let s = open_store(&app)?;
     Ok(Json(serde_json::json!({
         "ok": true,
         "role": "genesis",
@@ -75,18 +79,20 @@ async fn health(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, 
     })))
 }
 
-async fn pubkey_handler(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = open_store(&app.config_dir)?;
+async fn pubkey_handler(
+    State(app): State<Arc<App>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let s = open_store(&app)?;
     Ok(Json(serde_json::json!({
         "genesis_pubkey": s.keys().public_hex(),
     })))
 }
 
-async fn truth_handler(
-    State(app): State<Arc<App>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = open_store(&app.config_dir)?;
-    let snap = s.snapshot().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn truth_handler(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let s = open_store(&app)?;
+    let snap = s
+        .snapshot()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::to_value(snap).unwrap()))
 }
 

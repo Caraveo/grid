@@ -186,6 +186,17 @@ fn aes_decrypt(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("decrypt failed — wrong factor(s) or corrupt vault"))
 }
 
+/// Encrypt an auxiliary secret under the currently unlocked vault DEK.
+/// Callers must obtain `dek` through `require_identity` or `require_unlocked`.
+pub fn encrypt_with_vault(dek: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
+    aes_encrypt(dek, plaintext)
+}
+
+/// Decrypt an auxiliary secret stored by [`encrypt_with_vault`].
+pub fn decrypt_with_vault(dek: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
+    aes_decrypt(dek, ciphertext)
+}
+
 fn kdf(secret: &str, salt: &[u8; 16], domain: &str) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key(domain);
     h.update(salt);

@@ -1317,33 +1317,41 @@ async fn run_auth(config_dir: &PathBuf, action: Option<AuthCmd>) -> Result<()> {
 
 async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
     use grid::genesis::{
-        export_pubkey_hex, generate_keypair, run_genesis_server, store::fetch_truth, GenesisStore,
+        export_pubkey_hex, generate_protected, load_protected, run_genesis_server,
+        store::fetch_truth, GenesisStore,
     };
 
     match action {
         GenesisCmd::Init => {
             banner::print_banner();
             println!();
-            let keys = generate_keypair(config_dir)?;
-            println!("✓ Genesis keypair created");
-            println!("  public:  {}", keys.public_hex());
+            let dek =
+                grid::passkey::require_identity(config_dir, "create protected genesis authority")
+                    .await?;
+            let authority = generate_protected(config_dir, &dek)?;
+            println!("✓ Protected genesis authority created");
+            println!("  leader public: {}", authority.leader_pubkey);
+            println!("  recovery:      2-of-2 public keys committed for genesis");
             println!(
-                "  secret:  {} (mode 0600 — never share)",
-                config_dir.join("genesis/secret.key").display()
+                "  private keys:  {} (encrypted by combo vault)",
+                config_dir.join("genesis").display()
             );
             println!();
             println!("Next:");
-            println!("  grid auth                 # protect operator keys");
             println!("  grid genesis serve --bind 0.0.0.0:9100");
             println!("  grid genesis track --id <peer> --name <n> --listen host:port");
             println!();
             println!("Distribute ONLY the public key to peers:");
-            println!("  export GRID_GENESIS_PUBKEY={}", keys.public_hex());
+            println!("  export GRID_GENESIS_PUBKEY={}", authority.leader_pubkey);
         }
         GenesisCmd::Serve { bind } => {
             banner::print_banner();
             println!();
-            run_genesis_server(config_dir.clone(), &bind).await?;
+            let dek =
+                grid::passkey::require_identity(config_dir, "serve protected genesis authority")
+                    .await?;
+            let keys = load_protected(config_dir, &dek)?;
+            run_genesis_server(config_dir.clone(), &bind, keys).await?;
         }
         GenesisCmd::Track {
             id,
@@ -1351,12 +1359,16 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             listen,
             class,
         } => {
-            let mut store = GenesisStore::open(config_dir)?;
+            let dek = grid::passkey::require_identity(config_dir, "track genesis peer").await?;
+            let mut store =
+                GenesisStore::open_with_keys(config_dir, load_protected(config_dir, &dek)?)?;
             store.track(&id, &name, &listen, &class)?;
             println!("✓ tracked {id} epoch={}", store.epoch());
         }
         GenesisCmd::Untrack { id } => {
-            let mut store = GenesisStore::open(config_dir)?;
+            let dek = grid::passkey::require_identity(config_dir, "untrack genesis peer").await?;
+            let mut store =
+                GenesisStore::open_with_keys(config_dir, load_protected(config_dir, &dek)?)?;
             if store.untrack(&id)? {
                 println!("✓ untracked {id} epoch={}", store.epoch());
             } else {
@@ -1365,16 +1377,18 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
         }
         GenesisCmd::Ban { id, reason } => {
             // Requires unlocked vault / passkey session when auth is initialized.
-            let _ = grid::passkey::require_unlocked(config_dir, "policy mutation").await;
-            let mut store = GenesisStore::open(config_dir)?;
+            let dek = grid::passkey::require_identity(config_dir, "policy mutation").await?;
+            let mut store =
+                GenesisStore::open_with_keys(config_dir, load_protected(config_dir, &dek)?)?;
             let id = grid::passkey::normalize_peer_target(&id);
             let rec = store.ban(&id, &reason)?;
             println!("✓ policy applied {}", rec.peer_id);
             println!("  epoch   {}", store.epoch());
         }
         GenesisCmd::Unban { id } => {
-            let _ = grid::passkey::require_unlocked(config_dir, "policy mutation").await;
-            let mut store = GenesisStore::open(config_dir)?;
+            let dek = grid::passkey::require_identity(config_dir, "policy mutation").await?;
+            let mut store =
+                GenesisStore::open_with_keys(config_dir, load_protected(config_dir, &dek)?)?;
             let id = grid::passkey::normalize_peer_target(&id);
             if store.unban(&id)? {
                 println!("✓ policy cleared {id} epoch={}", store.epoch());
@@ -1383,7 +1397,11 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             }
         }
         GenesisCmd::List => {
-            let store = GenesisStore::open(config_dir)?;
+            let dek =
+                grid::passkey::require_identity(config_dir, "read protected genesis authority")
+                    .await?;
+            let store =
+                GenesisStore::open_with_keys(config_dir, load_protected(config_dir, &dek)?)?;
             println!("Genesis truth epoch={}", store.epoch());
             println!("pubkey {}", store.keys().public_hex());
             println!("\nTracked ({}):", store.list_tracked().len());
