@@ -39,7 +39,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked
+      - name: Install Windows OpenSSL build dependency
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install strawberryperl --no-progress --yes
+      - name: Build release binary
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            export PATH="C:/Strawberry/perl/bin:$PATH"
+          fi
+          cargo build --release --locked
       - run: |
           mkdir -p dist
           cp "target/release/${{ matrix.binary }}" "dist/${{ matrix.asset }}"
