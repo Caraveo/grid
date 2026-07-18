@@ -46,7 +46,9 @@ jobs:
       - name: Build release binary
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            export PATH="C:/Strawberry/perl/bin:$PATH"
+            export PATH="/c/Strawberry/perl/bin:$PATH"
+            export PERL="/c/Strawberry/perl/bin/perl.exe"
+            "$PERL" -MLocale::Maketext::Simple -e 1
           fi
           cargo build --release --locked
       - run: |
