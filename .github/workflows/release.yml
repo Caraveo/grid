@@ -20,18 +20,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
+          - os: macos-14
             asset: grid-darwin-x86_64
             binary: grid
+            target: x86_64-apple-darwin
           - os: macos-14
             asset: grid-darwin-aarch64
             binary: grid
+            target: ""
           - os: ubuntu-24.04
             asset: grid-linux-x86_64
             binary: grid
+            target: ""
           - os: windows-2022
             asset: grid-windows-x86_64.exe
             binary: grid.exe
+            target: ""
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -39,6 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install cross-compilation target
+        if: matrix.target != ''
+        run: rustup target add "${{ matrix.target }}"
       - name: Install Windows OpenSSL build dependency
         if: runner.os == 'Windows'
         shell: pwsh
@@ -50,10 +57,18 @@ jobs:
             export PERL="/c/Strawberry/perl/bin/perl.exe"
             "$PERL" -MLocale::Maketext::Simple -e 1
           fi
-          cargo build --release --locked
+          if [[ -n "${{ matrix.target }}" ]]; then
+            cargo build --release --locked --target "${{ matrix.target }}"
+          else
+            cargo build --release --locked
+          fi
       - run: |
           mkdir -p dist
-          cp "target/release/${{ matrix.binary }}" "dist/${{ matrix.asset }}"
+          binary_path="target/release/${{ matrix.binary }}"
+          if [[ -n "${{ matrix.target }}" ]]; then
+            binary_path="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          fi
+          cp "$binary_path" "dist/${{ matrix.asset }}"
           if [[ "${{ runner.os }}" != "Windows" ]]; then chmod 755 "dist/${{ matrix.asset }}"; fi
       - uses: actions/upload-artifact@v4
         with:
