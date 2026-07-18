@@ -1329,8 +1329,15 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
                 grid::passkey::require_identity(config_dir, "create protected genesis authority")
                     .await?;
             let authority = generate_protected(config_dir, &dek)?;
+            let keys = load_protected(config_dir, &dek)?;
+            let replica = grid::blockchain::ChainReplica::create_genesis(
+                &keys,
+                authority.recovery_pubkeys.clone(),
+            )?;
+            replica.save(config_dir)?;
             println!("✓ Protected genesis authority created");
             println!("  leader public: {}", authority.leader_pubkey);
+            println!("  chain id:      {}", replica.chain_id);
             println!("  recovery:      2-of-2 public keys committed for genesis");
             println!(
                 "  private keys:  {} (encrypted by combo vault)",

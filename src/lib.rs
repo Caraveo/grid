@@ -7,14 +7,15 @@
 pub mod address;
 pub mod banner;
 pub mod bench;
+pub mod blockchain;
 pub mod chain;
 pub mod claim;
 pub mod compute;
-pub mod ember;
 pub mod config;
 pub mod coord;
 pub mod crypto;
 pub mod earn;
+pub mod ember;
 pub mod executor;
 pub mod wallet;
 
