@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.10-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.11-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -20,7 +20,40 @@
 
 ---
 
-## Install
+## Get started now
+
+### macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
+brew install lima
+limactl start --name=grid-containerd template:default
+nerdctl info
+grid init --name my-node --class S
+```
+
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
+# Install rootless containerd + nerdctl using your distribution or nerdctl release.
+nerdctl info
+grid init --name my-node --class S
+```
+
+### Windows (WSL2)
+
+```powershell
+wsl --install -d Ubuntu
+wsl -d Ubuntu
+```
+
+Then, inside Ubuntu, follow the Linux commands above. GRID host jobs use the
+same Linux containerd isolation in WSL2; a native Windows binary is published
+for CLI use, but native Windows containers are intentionally not used for host
+jobs.
+
+## Install details
 
 ### One-liner (`curl`) — recommended
 
