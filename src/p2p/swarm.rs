@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -35,6 +36,7 @@ pub struct PeerOptions {
     pub pubkey_hex: Option<String>,
     /// In-memory static key derived after the operator passkey vault is unlocked.
     pub noise_static_key: [u8; 32],
+    pub config_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -253,6 +255,7 @@ async fn handle_connection(
     ))
     .await
     .ok();
+    tx.send(Message::GetBlocks { from_height: 0 }).await.ok();
 
     {
         let addrs: Vec<String> = state.lock().known_addrs.iter().cloned().collect();
@@ -482,6 +485,58 @@ async fn handle_connection(
                     .map(|x| format!("grid://{x}.grid"))
                     .unwrap_or_else(|| "—".into());
                 println!("[p2p] found nonce={nonce} {name} ({node_id}) @ {a} · {r}");
+            }
+            Message::GetBlocks { from_height } => {
+                if let Ok(Some(replica)) = crate::blockchain::ChainReplica::load(&opts.config_dir) {
+                    let blocks = replica
+                        .blocks
+                        .into_iter()
+                        .filter(|b| b.height >= from_height)
+                        .collect();
+                    tx.send(Message::Blocks { blocks }).await.ok();
+                }
+            }
+            Message::Blocks { blocks } => {
+                if blocks.is_empty() {
+                    continue;
+                }
+                let mut replica = match crate::blockchain::ChainReplica::load(&opts.config_dir) {
+                    Ok(Some(r)) => r,
+                    Ok(None) => {
+                        let Some(genesis) = blocks.iter().find(|b| b.height == 0).cloned() else {
+                            continue;
+                        };
+                        let r = crate::blockchain::ChainReplica {
+                            chain_id: genesis.chain_id.clone(),
+                            leader_pubkey: genesis.leader_pubkey.clone(),
+                            max_supply: crate::chain::MAX_SUPPLY,
+                            recovery_pubkeys: vec![],
+                            blocks: vec![genesis],
+                        };
+                        if r.verify().is_err() {
+                            continue;
+                        }
+                        r
+                    }
+                    Err(_) => continue,
+                };
+                let mut accepted = 0usize;
+                for block in blocks {
+                    if block.height <= replica.tip().height {
+                        continue;
+                    }
+                    if replica.apply_replica_block(block).is_ok() {
+                        accepted += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if accepted > 0 && replica.save(&opts.config_dir).is_ok() {
+                    println!(
+                        "[chain] synced {accepted} verified block(s), height={}",
+                        replica.tip().height
+                    );
+                }
             }
         }
     }

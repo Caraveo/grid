@@ -47,10 +47,16 @@ fn recovery_dir(config_dir: &Path) -> PathBuf {
     genesis_dir(config_dir).join("recovery")
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GenesisAuthority {
     pub leader_pubkey: String,
     pub recovery_pubkeys: Vec<String>,
+}
+
+pub fn load_authority(config_dir: &Path) -> Result<GenesisAuthority> {
+    Ok(serde_json::from_str(&fs::read_to_string(
+        genesis_dir(config_dir).join("authority.json"),
+    )?)?)
 }
 
 /// Create a fresh leader and two recovery signing keys. All private material is

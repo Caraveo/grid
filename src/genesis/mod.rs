@@ -18,8 +18,8 @@ pub mod store;
 mod truth;
 
 pub use keys::{
-    export_pubkey_hex, generate_keypair, generate_protected, load_keypair, load_protected,
-    GenesisAuthority, GenesisKeys,
+    export_pubkey_hex, generate_keypair, generate_protected, load_authority, load_keypair,
+    load_protected, GenesisAuthority, GenesisKeys,
 };
 pub use server::run_genesis_server;
 pub use store::{fetch_truth, GenesisStore};

@@ -469,6 +469,8 @@ enum AuthCmd {
 enum GenesisCmd {
     /// Create genesis Ed25519 keypair (secret never leaves this host)
     Init,
+    /// One-time migration: create signed block genesis from existing protected authority
+    ChainInit,
     /// Serve signed truth over HTTP (read-only; no remote ban)
     Serve {
         #[arg(long, default_value = "127.0.0.1:9100")]
@@ -917,6 +919,7 @@ async fn main() -> Result<()> {
                 realm: realm_n,
                 pubkey_hex,
                 noise_static_key,
+                config_dir: config_dir.clone(),
             };
             run_peer(opts).await?;
         }
@@ -1317,7 +1320,7 @@ async fn run_auth(config_dir: &PathBuf, action: Option<AuthCmd>) -> Result<()> {
 
 async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
     use grid::genesis::{
-        export_pubkey_hex, generate_protected, load_protected, run_genesis_server,
+        export_pubkey_hex, generate_protected, load_authority, load_protected, run_genesis_server,
         store::fetch_truth, GenesisStore,
     };
 
@@ -1350,6 +1353,20 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             println!();
             println!("Distribute ONLY the public key to peers:");
             println!("  export GRID_GENESIS_PUBKEY={}", authority.leader_pubkey);
+        }
+        GenesisCmd::ChainInit => {
+            let dek =
+                grid::passkey::require_identity(config_dir, "create signed block genesis").await?;
+            if grid::blockchain::ChainReplica::load(config_dir)?.is_some() {
+                anyhow::bail!("block genesis already exists");
+            }
+            let authority = load_authority(config_dir)?;
+            let replica = grid::blockchain::ChainReplica::create_genesis(
+                &load_protected(config_dir, &dek)?,
+                authority.recovery_pubkeys,
+            )?;
+            replica.save(config_dir)?;
+            println!("✓ signed block genesis created: {}", replica.chain_id);
         }
         GenesisCmd::Serve { bind } => {
             banner::print_banner();

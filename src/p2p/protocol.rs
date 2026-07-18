@@ -57,6 +57,12 @@ pub enum Message {
         name: String,
         listen: String,
     },
+    GetBlocks {
+        from_height: u64,
+    },
+    Blocks {
+        blocks: Vec<crate::blockchain::Block>,
+    },
 }
 
 impl Message {
