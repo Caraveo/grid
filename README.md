@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.7-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.8-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -122,7 +122,28 @@ grid stats
 grid wallet
 ```
 
-Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). Docker required for host path (`colima start` / Docker Desktop).
+Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). The host runtime is **containerd via nerdctl**; GRID refuses to fall back to Docker.
+
+### Launcher container access
+
+An interactive job may request `"tunnel": true` with `"servicePort": 41783`.
+This is the only GRID container service port. It is bound to `127.0.0.1` on
+the compute host, never to a LAN/WAN interface; it is reserved for an assigned
+launcher’s authenticated encrypted GRID peer session. Arbitrary host ports,
+host networking, Docker socket mounts, and host shells are not permitted.
+
+Launcher admission is tied to a 32-byte public key. Requests containing
+Docker/Kubernetes host-escape controls (privileged mode, host networking/PID,
+host paths, capabilities, or Docker socket access) are rejected and the
+launcher key is permanently banned by the coordinator.
+
+Transport design: a launcher and assigned remote node use their own ephemeral
+X25519 session keys; GRID/MESH may hold a separate broker key for encrypted
+locator and capability metadata, but that broker key must not decrypt workload
+content. A standard container runtime cannot hide plaintext from the host that
+executes it. Host-blind workloads therefore require verified confidential
+compute attestation (TDX/SEV-SNP or equivalent) and are not enabled by this
+pilot runtime.
 
 ### Public compute registry (grid-compute.com)
 

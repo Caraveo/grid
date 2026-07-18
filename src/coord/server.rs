@@ -65,6 +65,8 @@ struct PersistedState {
     jobs: HashMap<String, Job>,
     queue: VecDeque<String>,
     nodes: HashMap<String, NodeInfo>,
+    #[serde(default)]
+    launchers: HashMap<String, LauncherTrust>,
     earn: EarnLedger,
     #[serde(default)]
     settlements: Vec<Settlement>,
@@ -75,6 +77,7 @@ struct Store {
     jobs: HashMap<String, Job>,
     queue: VecDeque<String>,
     nodes: HashMap<String, NodeInfo>,
+    launchers: HashMap<String, LauncherTrust>,
     earn: EarnLedger,
     settlements: Vec<Settlement>,
     work_seq: u64,
@@ -87,6 +90,7 @@ impl Store {
             jobs: HashMap::new(),
             queue: VecDeque::new(),
             nodes: HashMap::new(),
+            launchers: HashMap::new(),
             earn: EarnLedger::default(),
             settlements: vec![],
             work_seq: 0,
@@ -99,6 +103,7 @@ impl Store {
             jobs: p.jobs,
             queue: p.queue,
             nodes: p.nodes,
+            launchers: p.launchers,
             earn: p.earn,
             settlements: p.settlements,
             work_seq: p.work_seq,
@@ -111,11 +116,55 @@ impl Store {
             jobs: self.jobs.clone(),
             queue: self.queue.clone(),
             nodes: self.nodes.clone(),
+            launchers: self.launchers.clone(),
             earn: self.earn.clone(),
             settlements: self.settlements.clone(),
             work_seq: self.work_seq,
         }
     }
+}
+
+/// Coordinator-side admission record. A launcher must have a durable public
+/// identity before it can request an interactive container.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LauncherTrust {
+    pub public_key: String,
+    #[serde(default = "launcher_neutral")]
+    pub reputation: f64,
+    #[serde(default)]
+    pub rejected_requests: u64,
+    #[serde(default)]
+    pub completed_jobs: u64,
+    #[serde(default)]
+    pub banned: bool,
+    #[serde(default)]
+    pub ban_reason: Option<String>,
+}
+
+fn launcher_neutral() -> f64 { 1.0 }
+
+fn valid_launcher_key(key: &str) -> bool {
+    key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Requests containing host-escape controls are never schedulable. Keep this
+/// deliberately structural so ordinary job text mentioning "root" cannot ban
+/// someone; these are Docker/Kubernetes privilege mechanisms only.
+fn host_escape_attempt(payload: &str) -> bool {
+    let p = payload.to_ascii_lowercase();
+    [
+        "\"privileged\"",
+        "\"hostnetwork\"",
+        "\"hostpid\"",
+        "/var/run/docker.sock",
+        "--pid=host",
+        "--net=host",
+        "\"capadd\"",
+        "\"hostpath\"",
+    ]
+    .iter()
+    .any(|needle| p.contains(needle))
 }
 
 #[derive(Clone, Debug)]
@@ -258,6 +307,7 @@ fn feed_auto_work(app: &App) {
                 created_at: Utc::now().to_rfc3339(),
                 timeout_sec: 180,
                 intent_commitment: None,
+                launcher_pubkey: None,
                 status: "queued".into(),
                 assigned_node_id: None,
                 earn_credits: None,
@@ -315,6 +365,7 @@ fn feed_auto_work(app: &App) {
                 created_at: Utc::now().to_rfc3339(),
                 timeout_sec: 120,
                 intent_commitment: None,
+                launcher_pubkey: None,
                 status: "queued".into(),
                 assigned_node_id: None,
                 earn_credits: None,
@@ -382,6 +433,8 @@ struct CreateJobBody {
     kind: Option<String>,
     payload: Option<String>,
     timeout_sec: Option<u64>,
+    #[serde(default)]
+    launcher_pubkey: Option<String>,
 }
 
 async fn create_job(
@@ -391,16 +444,41 @@ async fn create_job(
     let kind_s = body
         .kind
         .unwrap_or_else(|| JobKind::Blake3Work.as_str().into());
-    JobKind::parse(&kind_s).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let kind = JobKind::parse(&kind_s).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let payload = body.payload.unwrap_or_else(|| {
         fabric_work_payload(Utc::now().timestamp() as u64, 0, DEFAULT_BLAKE3_ITERS)
     });
+    let launcher = body.launcher_pubkey.map(|k| k.to_lowercase());
+    if kind == JobKind::ContainerWork && !launcher.as_deref().is_some_and(valid_launcher_key) {
+        return Err((StatusCode::FORBIDDEN, "container jobs require a 32-byte launcher public key".into()));
+    }
+    if let Some(ref key) = launcher {
+        if !valid_launcher_key(key) {
+            return Err((StatusCode::BAD_REQUEST, "launcher public key must be 32-byte hex".into()));
+        }
+        let mut g = app.inner.lock();
+        let trust = g.launchers.entry(key.clone()).or_insert_with(|| LauncherTrust {
+            public_key: key.clone(), reputation: 1.0, rejected_requests: 0,
+            completed_jobs: 0, banned: false, ban_reason: None,
+        });
+        if trust.banned {
+            return Err((StatusCode::FORBIDDEN, format!("launcher banned: {}", trust.ban_reason.as_deref().unwrap_or("policy"))));
+        }
+        if kind == JobKind::ContainerWork && host_escape_attempt(&payload) {
+            trust.rejected_requests += 1;
+            trust.reputation = 0.0;
+            trust.banned = true;
+            trust.ban_reason = Some("attempted container host escape or privilege elevation".into());
+            g.dirty = true;
+            return Err((StatusCode::FORBIDDEN, "launcher banned: host escape controls are forbidden".into()));
+        }
+    }
     // Validate payload early
     if let Ok(JobKind::Blake3Work) = JobKind::parse(&kind_s) {
         crate::executor::parse_blake3_payload(&payload)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     }
-    if let Ok(JobKind::ContainerWork) = JobKind::parse(&kind_s) {
+    if let JobKind::ContainerWork = kind {
         crate::compute::ContainerJobSpec::parse(&payload)
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     }
@@ -411,6 +489,7 @@ async fn create_job(
         created_at: Utc::now().to_rfc3339(),
         timeout_sec: body.timeout_sec.unwrap_or(180),
         intent_commitment: None,
+        launcher_pubkey: launcher,
         status: "queued".into(),
         assigned_node_id: None,
         earn_credits: None,
@@ -624,6 +703,16 @@ async fn complete_job(
         } else {
             node.jobs_failed += 1;
             node.reputation = (node.reputation - 0.15).max(0.5);
+        }
+    }
+    if let Some(key) = g.jobs.get(&body.job_id).and_then(|j| j.launcher_pubkey.clone()) {
+        if let Some(launcher) = g.launchers.get_mut(&key) {
+            if verified {
+                launcher.completed_jobs += 1;
+                launcher.reputation = (launcher.reputation + 0.01).min(1.5);
+            } else {
+                launcher.reputation = (launcher.reputation - 0.05).max(0.25);
+            }
         }
     }
 

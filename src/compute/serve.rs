@@ -4,11 +4,13 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use super::allowlist::is_image_allowed;
-use super::docker::{docker_available, run_job};
+use super::docker::{containerd_available, run_job};
+use super::tunnel::{validate_container_port, GRID_CONTAINER_PORT};
 use crate::executor::ExecResult;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "camelCase")]
 pub struct ContainerJobSpec {
     pub image: String,
@@ -22,6 +24,14 @@ pub struct ContainerJobSpec {
     pub memory_mb: u64,
     #[serde(default)]
     pub network: bool,
+    /// Permit the assigned launcher to reach this job container through the
+    /// GRID encrypted data plane. This never grants host access.
+    #[serde(default)]
+    pub tunnel: bool,
+    /// The only permitted in-container service port. It is published on host
+    /// loopback only while the one-shot job is alive.
+    #[serde(default)]
+    pub service_port: Option<u16>,
     #[serde(default)]
     pub compute: Option<String>,
     #[serde(default)]
@@ -46,6 +56,7 @@ impl ContainerJobSpec {
             if s.cmd.is_empty() {
                 s.cmd = vec!["echo".into(), "grid-host-ok".into()];
             }
+            s.validate_tunnel()?;
             return Ok(s);
         }
         // shorthand: image|arg1|arg2…
@@ -64,9 +75,26 @@ impl ContainerJobSpec {
             cpus: 0.5,
             memory_mb: 256,
             network: false,
+            tunnel: false,
+            service_port: None,
             compute: None,
             env: vec![],
         })
+    }
+
+    pub fn validate_tunnel(&self) -> Result<()> {
+        match (self.tunnel, self.service_port) {
+            (false, None) => Ok(()),
+            (false, Some(_)) => bail!("servicePort requires tunnel=true"),
+            (true, Some(port)) => {
+                validate_container_port(port)?;
+                if !self.network {
+                    bail!("tunnel=true requires the isolated Docker bridge network");
+                }
+                Ok(())
+            }
+            (true, None) => bail!("tunnel=true requires servicePort={GRID_CONTAINER_PORT}"),
+        }
     }
 }
 
@@ -104,12 +132,12 @@ pub async fn serve_container_job(config_dir: &Path, payload: &str) -> ExecResult
         }
     }
 
-    if !docker_available().await {
+    if !containerd_available().await {
         return ExecResult {
             ok: false,
             output: String::new(),
             duration_ms: 0,
-            error: Some("Docker not available — start Colima/Docker Desktop".into()),
+            error: Some("containerd/nerdctl not available — start containerd with nerdctl".into()),
         };
     }
 
@@ -141,12 +169,33 @@ pub async fn expected_container_output(payload: &str) -> Result<String, String> 
     if spec.cmd.len() >= 2 && (spec.cmd[0] == "echo" || spec.cmd[0].ends_with("/echo")) {
         return Ok(spec.cmd[1..].join(" "));
     }
-    if !docker_available().await {
+    if !containerd_available().await {
         return Err("docker required to verify container_work".into());
     }
     match run_job(&spec).await {
         Ok((true, out, _)) => Ok(out),
         Ok((false, out, _)) => Err(format!("verify container failed: {out}")),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tunnel_requires_the_one_grid_container_port() {
+        let ok = ContainerJobSpec::parse(
+            r#"{"image":"alpine:3.20","cmd":["echo","ok"],"network":true,"tunnel":true,"servicePort":41783}"#,
+        );
+        assert!(ok.is_ok());
+        let arbitrary = ContainerJobSpec::parse(
+            r#"{"image":"alpine:3.20","network":true,"tunnel":true,"servicePort":8080}"#,
+        );
+        assert!(arbitrary.is_err());
+        let no_network = ContainerJobSpec::parse(
+            r#"{"image":"alpine:3.20","tunnel":true,"servicePort":41783}"#,
+        );
+        assert!(no_network.is_err());
     }
 }

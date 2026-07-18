@@ -84,7 +84,7 @@ enum Commands {
         #[arg(long, group = "vis")]
         private: bool,
         /// Runtime backend
-        #[arg(long, default_value = "docker")]
+        #[arg(long, default_value = "containerd")]
         backend: String,
         #[arg(long, default_value = "1.0")]
         cpus: f64,
@@ -94,8 +94,8 @@ enum Commands {
         replicas: u32,
         #[arg(long, default_value = "S")]
         class: String,
-        /// Optional service port for public hint
-        #[arg(long)]
+        /// Fixed isolated container service port (must be 41783)
+        #[arg(long, default_value = "41783")]
         port: Option<u16>,
     },
 

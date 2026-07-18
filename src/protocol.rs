@@ -71,6 +71,9 @@ pub struct Job {
     /// A completion is eligible only when it verifies against this intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent_commitment: Option<String>,
+    /// Stable launcher identity used for admission control and reputation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher_pubkey: Option<String>,
     #[serde(default)]
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

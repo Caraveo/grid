@@ -404,6 +404,34 @@ verify_install() {
   fi
 }
 
+check_container_runtime() {
+  # A host compute is deliberately containerd-only. Do not silently substitute
+  # Docker: the isolation contract and operator runbook must match.
+  if command -v nerdctl >/dev/null 2>&1 && nerdctl info >/dev/null 2>&1; then
+    ok "containerd/nerdctl runtime is ready"
+    return 0
+  fi
+
+  warn "containerd/nerdctl is required for 'grid launch' and 'grid host'"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    cat >&2 <<'EOF'
+  macOS recommended runtime (rootless Lima VM; does not use Docker Desktop):
+    brew install lima
+    limactl start --name=grid-containerd template:default
+    limactl shell grid-containerd -- nerdctl version
+
+  Then install a local ~/.local/bin/nerdctl wrapper that invokes:
+    limactl shell grid-containerd -- nerdctl "$@"
+  GRID will fail closed until `nerdctl info` succeeds.
+EOF
+  else
+    cat >&2 <<'EOF'
+  Linux: install containerd, runc, and nerdctl from your distribution or the
+  official nerdctl release, then verify: nerdctl info
+EOF
+  fi
+}
+
 do_uninstall() {
   bold "GRID uninstall"
   local removed=0
@@ -448,6 +476,11 @@ print_next() {
   grid coord                # terminal 1
   grid node                 # terminal 2
   grid submit --wait        # terminal 3
+
+  # Host useful containers (requires containerd + nerdctl; no Docker fallback)
+  nerdctl info
+  grid launch my-compute
+  grid host
 
 Public mesh registry: https://grid-compute.com
   grid registry                 # list peers
@@ -532,6 +565,7 @@ EOF
   fi
 
   verify_install
+  check_container_runtime
   print_next
 }
 

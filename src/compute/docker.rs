@@ -1,4 +1,4 @@
-//! Docker CLI backend — isolated capacity + one-shot job runs.
+//! containerd/nerdctl CLI backend — isolated capacity + one-shot job runs.
 
 use anyhow::{bail, Context, Result};
 use std::process::Command;
@@ -10,17 +10,17 @@ use super::manifest::ComputeManifest;
 use super::serve::ContainerJobSpec;
 
 #[derive(Debug)]
-pub struct DockerError(pub String);
+pub struct ContainerdError(pub String);
 
-impl std::fmt::Display for DockerError {
+impl std::fmt::Display for ContainerdError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
-impl std::error::Error for DockerError {}
+impl std::error::Error for ContainerdError {}
 
-pub async fn docker_available() -> bool {
-    AsyncCommand::new("docker")
+pub async fn containerd_available() -> bool {
+    AsyncCommand::new("nerdctl")
         .args(["info"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -33,20 +33,20 @@ pub async fn docker_available() -> bool {
 /// Register capacity: pull allowlisted image. Jobs are one-shot isolated runs
 /// (no long-lived host-mounted containers).
 pub async fn ensure_capacity(m: &ComputeManifest) -> Result<Vec<String>> {
-    let pull = AsyncCommand::new("docker")
+    let pull = AsyncCommand::new("nerdctl")
         .args(["pull", &m.image])
         .output()
         .await
-        .context("docker pull")?;
+        .context("containerd/nerdctl pull")?;
     if !pull.status.success() {
         // Image may already be local
-        let inspect = AsyncCommand::new("docker")
+        let inspect = AsyncCommand::new("nerdctl")
             .args(["image", "inspect", &m.image])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .await
-            .context("docker image inspect")?;
+            .context("containerd/nerdctl image inspect")?;
         if !inspect.success() {
             bail!(
                 "cannot pull or find image {}: {}",
@@ -60,25 +60,25 @@ pub async fn ensure_capacity(m: &ComputeManifest) -> Result<Vec<String>> {
 }
 
 pub fn stop_container(id: &str) -> Result<()> {
-    let _ = Command::new("docker").args(["stop", id]).status();
+    let _ = Command::new("nerdctl").args(["stop", id]).status();
     Ok(())
 }
 
 pub fn rm_container(id: &str) -> Result<()> {
-    let _ = Command::new("docker").args(["rm", "-f", id]).status();
+    let _ = Command::new("nerdctl").args(["rm", "-f", id]).status();
     Ok(())
 }
 
 pub fn logs(id: &str, follow: bool) -> Result<()> {
-    let mut cmd = Command::new("docker");
+    let mut cmd = Command::new("nerdctl");
     cmd.arg("logs");
     if follow {
         cmd.arg("-f");
     }
     cmd.arg(id);
-    let st = cmd.status().context("docker logs")?;
+    let st = cmd.status().context("containerd/nerdctl logs")?;
     if !st.success() {
-        bail!("docker logs failed");
+        bail!("containerd/nerdctl logs failed");
     }
     Ok(())
 }
@@ -86,10 +86,7 @@ pub fn logs(id: &str, follow: bool) -> Result<()> {
 /// One-shot isolated job container (host path).
 pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
     let t0 = std::time::Instant::now();
-    let cname = format!(
-        "grid-job-{}",
-        &uuid::Uuid::new_v4().to_string()[..8]
-    );
+    let cname = format!("grid-job-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let timeout = Duration::from_secs(spec.timeout_sec.max(5));
 
     let mut args = vec![
@@ -100,7 +97,20 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
         "--label".into(),
         "grid.job=1".into(),
     ];
-    args.extend(docker_isolation_args(spec.cpus, spec.memory_mb, spec.network));
+    args.extend(docker_isolation_args(
+        spec.cpus,
+        spec.memory_mb,
+        spec.network,
+    ));
+    if let Some(port) = spec.service_port {
+        // This is deliberately loopback-only. containerd/nerdctl never exposes the job
+        // container on a host/LAN/WAN interface, and the container receives no
+        // containerd/nerdctl socket, mounts, elevated caps, or host namespaces.
+        args.push("--publish".into());
+        args.push(format!("127.0.0.1:{port}:{port}"));
+        args.push("--label".into());
+        args.push(format!("grid.service.port={port}"));
+    }
     for (k, v) in &spec.env {
         args.push("-e".into());
         args.push(format!("{k}={v}"));
@@ -110,22 +120,22 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
         args.push(c.clone());
     }
 
-    let child = AsyncCommand::new("docker")
+    let child = AsyncCommand::new("nerdctl")
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .context("spawn docker run")?;
+        .context("spawn containerd/nerdctl run")?;
 
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
-            let _ = Command::new("docker").args(["rm", "-f", &cname]).status();
-            bail!("docker wait: {e}");
+            let _ = Command::new("nerdctl").args(["rm", "-f", &cname]).status();
+            bail!("containerd/nerdctl wait: {e}");
         }
         Err(_) => {
-            let _ = Command::new("docker").args(["rm", "-f", &cname]).status();
+            let _ = Command::new("nerdctl").args(["rm", "-f", &cname]).status();
             return Ok((
                 false,
                 format!("timeout after {}s", spec.timeout_sec),

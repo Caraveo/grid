@@ -13,7 +13,7 @@ mod serve;
 mod tunnel;
 
 pub use allowlist::{ensure_allowlist, is_image_allowed, DEFAULT_IMAGES};
-pub use docker::{docker_available, DockerError};
+pub use docker::{containerd_available, ContainerdError};
 pub use manifest::{
     compute_dir, export_compute, import_compute, list_computes, load_manifest, load_status,
     machine_id, remove_compute, save_manifest, save_status, ComputeManifest, ComputeStatus,
@@ -21,7 +21,7 @@ pub use manifest::{
 };
 pub use registry::{announce_computes, fetch_computes, print_computes};
 pub use serve::{serve_container_job, ContainerJobSpec};
-pub use tunnel::public_endpoint_hint;
+pub use tunnel::{public_endpoint_hint, GRID_CONTAINER_PORT};
 
 use anyhow::{bail, Context, Result};
 use std::path::Path;
@@ -50,6 +50,8 @@ pub async fn launch(
     }
 
     let mid = machine_id(config_dir)?;
+    let service_port = port.unwrap_or(GRID_CONTAINER_PORT);
+    tunnel::validate_container_port(service_port)?;
     let mut manifest = ComputeManifest {
         name: name.clone(),
         image: image.to_string(),
@@ -59,7 +61,7 @@ pub async fn launch(
         memory_mb,
         replicas: replicas.max(1),
         class: class.to_string(),
-        port,
+        port: Some(service_port),
         created_at: chrono::Utc::now().to_rfc3339(),
         machine_id: mid.clone(),
         public_url: None,
@@ -67,9 +69,9 @@ pub async fn launch(
 
     match backend {
         "docker" => {
-            if !docker_available().await {
+            if !containerd_available().await {
                 bail!(
-                    "Docker not available. Start the daemon (e.g. `colima start` or Docker Desktop), then retry."
+                    "containerd/nerdctl not available. Install nerdctl and start containerd; GRID refuses to fall back to Docker."
                 );
             }
             docker::ensure_capacity(&manifest).await?;
@@ -83,7 +85,7 @@ pub async fn launch(
                 updated_at: chrono::Utc::now().to_rfc3339(),
             };
             if visibility == ComputeVisibility::Public {
-                let hint = public_endpoint_hint(port.unwrap_or(8080));
+                let hint = public_endpoint_hint(service_port);
                 status.public_url = Some(hint.clone());
                 manifest.public_url = Some(hint);
             }
@@ -104,13 +106,13 @@ pub async fn launch(
                 updated_at: chrono::Utc::now().to_rfc3339(),
             };
             if visibility == ComputeVisibility::Public {
-                let hint = public_endpoint_hint(port.unwrap_or(8080));
+                let hint = public_endpoint_hint(service_port);
                 status.public_url = Some(hint.clone());
                 manifest.public_url = Some(hint);
             }
             save_status(config_dir, &status)?;
         }
-        other => bail!("unknown backend '{other}' (docker|k8s)"),
+        other => bail!("unknown backend '{other}' (containerd|k8s)"),
     }
 
     save_manifest(config_dir, &manifest)?;
@@ -208,7 +210,11 @@ pub fn print_status(config_dir: &Path, name: &str) -> Result<()> {
     println!("Memory:     {} MB", m.memory_mb);
     println!("Replicas:   {}", m.replicas);
     println!("Machine:    {}", m.machine_id);
-    if let Some(u) = m.public_url.as_ref().or(st.as_ref().and_then(|s| s.public_url.as_ref())) {
+    if let Some(u) = m
+        .public_url
+        .as_ref()
+        .or(st.as_ref().and_then(|s| s.public_url.as_ref()))
+    {
         println!("Public URL: {u}");
     }
     if let Some(st) = st {

@@ -1,26 +1,29 @@
-//! Public exposure hints — P2P mesh first; tunnels are last resort.
+//! Container service exposure policy.
+//!
+//! A job service is never published to a LAN/WAN interface.  The one allowed
+//! port is bound to loopback and is intended to be selected by an authenticated
+//! encrypted GRID peer session, not by a host shell or an arbitrary proxy.
 
-use std::process::Command;
+use anyhow::{bail, Result};
 
-/// Hint for public computes. Prefer GRID P2P peer announce; cloudflared only if needed.
-pub fn public_endpoint_hint(port: u16) -> String {
-    if which("cloudflared") {
-        format!(
-            "prefer: grid peer (P2P data plane) · last-resort tunnel: `cloudflared tunnel --url http://127.0.0.1:{port}`"
-        )
-    } else {
-        format!(
-            "prefer: grid peer / P2P mesh for reachability · local service 127.0.0.1:{port} (cloudflared optional last resort)"
-        )
+/// Fixed internal service port for every GRID job container.
+/// Deliberately high and non-standard so it cannot be mistaken for the P2P,
+/// coordinator, Docker, SSH, or genesis ports.
+pub const GRID_CONTAINER_PORT: u16 = 41_783;
+
+pub fn validate_container_port(port: u16) -> Result<()> {
+    if port != GRID_CONTAINER_PORT {
+        bail!(
+            "container service port must be {GRID_CONTAINER_PORT}; arbitrary host ports are forbidden"
+        );
     }
+    Ok(())
 }
 
-fn which(bin: &str) -> bool {
-    Command::new("which")
-        .arg(bin)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// A locator, not a public URL. Direct host connections are intentionally not
+/// supported: the peer tunnel must authenticate the job assignment first.
+pub fn public_endpoint_hint(port: u16) -> String {
+    format!(
+        "grid:// service locator · encrypted assigned-job tunnel only · container loopback port {port}"
+    )
 }
