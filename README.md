@@ -27,7 +27,7 @@ Then open a **new terminal** (or `hash -r`) and verify:
 
 ```bash
 which grid && grid -V
-grid auth --help      # must list passkey / master / …
+grid auth --help      # must list passkey / combo / …
 ```
 
 ### Reinstall / upgrade / options
@@ -99,7 +99,7 @@ Requires [Rust](https://rustup.rs) only when building from source (the installer
 ```bash
 # once
 grid init --name garage --class S
-grid auth master          # or passkey / …
+grid auth                 # passkey default (or password / combo / …)
 
 # terminal 1 — coordinator (auto mine PoR + demo host jobs)
 grid coord --bind 0.0.0.0:8787
@@ -193,7 +193,6 @@ grid auth passkey
 grid auth password
 grid auth keyphrase       # 24-word BIP39 phrase
 grid auth combo           # password → passkey → keyphrase
-grid auth master          # password + passkey + 24 words + master key (DESTROYED)
 grid auth nocrypt         # plain keys only (0600)
 grid auth login
 grid auth status
@@ -202,9 +201,8 @@ grid auth delete --wipe-keys
 
 Secrets live under `~/.grid/keys/` and `~/.grid/passkey/` — gitignored. Never commit them.
 
-**Master mode (maximum):** four factors — password + **passkey** + 24-word phrase +
-master key file. The randomized master key is shown once, then wiped from the node
-(`DESTROY`). Unlock needs **all four**. One factor alone unlocks nothing.
+Operator vault modes are **not** required for genesis authority. Genesis uses
+`grid genesis init` keys under `~/.grid/genesis/` — separate from the vault.
 
 ### Genesis registry
 
@@ -231,7 +229,7 @@ You should see **hello**, **pong rtt=… ms**, and a **peers** list.
 | `grid coord` | Job coordinator |
 | `grid node` | Miner — claim work, earn |
 | `grid peer` | **P2P** listen/dial, hello, ping RTT, peer gossip |
-| `grid auth` | Protect operator keys (passkey / password / 24-word / master / nocrypt) |
+| `grid auth` | Protect operator keys (passkey / password / 24-word / combo / nocrypt) |
 | `grid registry` | **Public mesh registry** (grid-compute.com) |
 | `grid genesis` | Phase 0 signed truth / ban list (local authority) |
 | `grid bench` | **Benchmark** CPU hash + memory throughput |

@@ -441,7 +441,7 @@ print_next() {
 
   # Protect keys (pick one)
   grid auth                 # default = passkey
-  grid auth master          # password + passkey + 24 words + master key
+  grid auth combo           # password → passkey → keyphrase
 
   # Mine
   grid init --name my-node --class S

@@ -8,7 +8,7 @@
 //! ```
 //!
 //! Security:
-//! 1. Vault unlock (master factors when configured)
+//! 1. Vault unlock (operator auth when configured)
 //! 2. Fresh passkey ceremony (step-up IdentityKey)
 //! 3. Ed25519 signature over canonical claim body with operator key
 //! 4. Local persistence + optional public registry POST

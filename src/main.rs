@@ -204,6 +204,12 @@ enum Commands {
         /// Genesis public key hex (trust anchor)
         #[arg(long, env = "GRID_GENESIS_PUBKEY")]
         genesis_pubkey: Option<String>,
+        /// Bind GP identity + announce dial directory for this realm
+        #[arg(long)]
+        realm: Option<String>,
+        /// Skip registry dial announce (local mesh only)
+        #[arg(long)]
+        no_announce: bool,
     },
 
     /// Genesis authority (Phase 0): peer registry + signed truth
@@ -278,6 +284,69 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// GRID Protocol identity helpers (internal id; UI stays grid://)
+    Gp {
+        #[command(subcommand)]
+        action: GpCmd,
+    },
+
+    /// Consent-gated compliance collection (IP/MAC for admin forensics only)
+    Compliance {
+        #[command(subcommand)]
+        action: ComplianceCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum GpCmd {
+    /// Show stable 128-hex identity for a realm (derived from operator key + realm)
+    Id {
+        /// Realm: fire | fire.grid | grid://fire.grid
+        realm: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve P2P listen targets for a realm (or 128-hex id)
+    Resolve {
+        query: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// TCP dial check via registry dial directory
+    Dial {
+        /// Realm or 128-hex id
+        query: String,
+    },
+    /// Fetch + verify permanent Key/Verified cert from registry
+    Cert {
+        realm: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComplianceCmd {
+    /// Show consent copy and enable collection (type yes)
+    Enable {
+        /// Skip interactive prompt (scripts only — still records consent)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Disable collection
+    Disable,
+    /// Local consent status
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Push attestation for a realm (requires enable)
+    Push {
+        realm: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -338,8 +407,6 @@ enum AuthCmd {
     Keyphrase,
     /// password → passkey → keyphrase
     Combo,
-    /// password + passkey + 24-word + master key (master DESTROYED on this node)
-    Master,
     /// Plain keys on disk only (0600) — no encryption
     Nocrypt,
     /// Unlock vault for this session
@@ -743,6 +810,8 @@ async fn main() -> Result<()> {
             class,
             genesis,
             genesis_pubkey,
+            realm,
+            no_announce,
         } => {
             banner::print_mark();
             println!();
@@ -766,6 +835,22 @@ async fn main() -> Result<()> {
             } else {
                 0.0
             };
+            let (gp_id, realm_n, pubkey_hex) = if let Some(ref r) = realm {
+                let g = grid::gp::gp_id_for_operator(&config_dir, r).ok();
+                let pk = grid::passkey::operator_pubkey_hex(&config_dir).ok();
+                let rn = grid::claim::normalize_realm(r).ok();
+                if !no_announce {
+                    if let (Some(_), Some(ref realm_ok)) = (&g, &rn) {
+                        if let Err(e) = grid::gp::p2p_announce(&config_dir, realm_ok, &listen).await
+                        {
+                            eprintln!("warn: dial announce failed: {e}");
+                        }
+                    }
+                }
+                (g, rn, pk)
+            } else {
+                (None, None, None)
+            };
             let opts = PeerOptions {
                 node_id,
                 name: node_name,
@@ -775,6 +860,9 @@ async fn main() -> Result<()> {
                 score,
                 genesis_url: genesis,
                 genesis_pubkey,
+                gp_id,
+                realm: realm_n,
+                pubkey_hex,
             };
             run_peer(opts).await?;
         }
@@ -1006,6 +1094,72 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Gp { action } => match action {
+            GpCmd::Id { realm, json } => {
+                grid::gp::print_gp_id(&config_dir, &realm, json)?;
+            }
+            GpCmd::Resolve { query, json } => {
+                let peers = grid::gp::resolve_dial(&query).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&peers)?);
+                } else if peers.is_empty() {
+                    println!("No dial targets for «{query}»");
+                } else {
+                    for (gp, realm, listen) in peers {
+                        println!(
+                            "  grid://{realm}.grid  {listen}  id={}…",
+                            &gp[..gp.len().min(12)]
+                        );
+                    }
+                }
+            }
+            GpCmd::Dial { query } => {
+                grid::gp::dial_once(&query).await?;
+            }
+            GpCmd::Cert { realm, json } => {
+                let c = grid::gp::verify_remote_cert(&realm).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&c)?);
+                } else {
+                    grid::gp::print_cert(&c);
+                }
+            }
+        },
+        Commands::Compliance { action } => match action {
+            ComplianceCmd::Enable { yes } => {
+                grid::gp::compliance_enable(&config_dir, yes)?;
+            }
+            ComplianceCmd::Disable => {
+                grid::gp::compliance_disable(&config_dir)?;
+            }
+            ComplianceCmd::Status { json } => {
+                let s = grid::gp::compliance_status(&config_dir);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&s)?);
+                } else {
+                    println!("compliance {}", if s.enabled { "ENABLED" } else { "disabled" });
+                    if s.enabled {
+                        println!("  consent   {}", s.consent_version);
+                        println!("  since     {}", s.consented_at);
+                        if let Some(t) = s.last_push_at {
+                            println!("  last push {t}");
+                        }
+                    } else {
+                        println!("  enable: grid compliance enable");
+                    }
+                }
+            }
+            ComplianceCmd::Push { realm, json } => {
+                let r = grid::gp::compliance_push(&config_dir, &realm).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&r)?);
+                } else {
+                    println!("✓ {}", r.message);
+                    println!("  realm {}", r.realm);
+                    println!("  id    {}", r.gp_id);
+                }
+            }
+        },
     }
 
     Ok(())
@@ -1020,7 +1174,6 @@ async fn run_auth(config_dir: &PathBuf, action: Option<AuthCmd>) -> Result<()> {
         AuthCmd::Password => auth_init(config_dir, AuthMode::Password).await?,
         AuthCmd::Keyphrase => auth_init(config_dir, AuthMode::Keyphrase).await?,
         AuthCmd::Combo => auth_init(config_dir, AuthMode::Combo).await?,
-        AuthCmd::Master => auth_init(config_dir, AuthMode::Master).await?,
         AuthCmd::Nocrypt => auth_init(config_dir, AuthMode::Nocrypt).await?,
         AuthCmd::Login => auth_login(config_dir).await?,
         AuthCmd::Status => {
@@ -1030,7 +1183,6 @@ async fn run_auth(config_dir: &PathBuf, action: Option<AuthCmd>) -> Result<()> {
             println!("  encrypted:  {}", s.keys_encrypted);
             println!("  unlocked:   {}", s.session_unlocked);
             println!("  passkey:    {}", s.passkey_registered);
-            println!("  master:     destroyed_on_node={}", s.master_destroyed);
             if let Some(pk) = s.public_key_hex {
                 println!("  public:     {pk}");
             }

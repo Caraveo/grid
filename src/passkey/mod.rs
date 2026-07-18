@@ -6,13 +6,12 @@
 //! grid auth password
 //! grid auth keyphrase       # 24-word phrase
 //! grid auth combo           # password → passkey → keyphrase
-//! grid auth master          # password + passkey + 24-word + master key (DESTROY)
 //! grid auth nocrypt         # plaintext keys only
 //! grid auth login | status | delete
 //! ```
 //!
-//! Master mode: password + passkey + 24 words + master key. The master key is
-//! shown once and **destroyed** on this node. Unlock needs every factor.
+//! Legacy master vaults (four-factor + off-node key) can still `grid auth login`.
+//! New master / DESTROY setup is removed — not required for genesis.
 //!
 //! Phase 2: ban policy may move to consensus; vault remains local key control.
 
