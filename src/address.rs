@@ -23,9 +23,7 @@ pub const VERSION_PAYMENT: u8 = 0;
 const CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
 fn polymod(values: &[u8]) -> u32 {
-    const GEN: [u32; 5] = [
-        0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3,
-    ];
+    const GEN: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
     let mut chk: u32 = 1;
     for &v in values {
         let b = chk >> 25;
@@ -112,9 +110,7 @@ fn decode_raw(s: &str) -> Result<(String, Vec<u8>)> {
         bail!("mixed-case bech32 not allowed");
     }
     let s = lower;
-    let pos = s
-        .rfind('1')
-        .context("missing bech32 separator '1'")?;
+    let pos = s.rfind('1').context("missing bech32 separator '1'")?;
     if pos < 1 || pos + 7 > s.len() {
         bail!("invalid bech32 layout");
     }

@@ -91,7 +91,10 @@ pub fn parse_blake3_payload(payload: &str) -> Result<(String, u64), String> {
         return Err("blake3_work payload empty (want seed|iterations)".into());
     }
     let (seed, iters) = if let Some((s, n)) = payload.rsplit_once('|') {
-        let n = n.trim().parse::<u64>().map_err(|_| format!("bad iterations: {n}"))?;
+        let n = n
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| format!("bad iterations: {n}"))?;
         (s.trim().to_string(), n)
     } else {
         (payload.to_string(), DEFAULT_BLAKE3_ITERS)

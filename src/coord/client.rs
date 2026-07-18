@@ -18,7 +18,11 @@ impl CoordinatorClient {
     }
 
     pub async fn health(&self) -> Result<bool> {
-        let res = self.http.get(format!("{}/health", self.base)).send().await?;
+        let res = self
+            .http
+            .get(format!("{}/health", self.base))
+            .send()
+            .await?;
         Ok(res.status().is_success())
     }
 
@@ -48,7 +52,10 @@ impl CoordinatorClient {
             .send()
             .await?;
         if !res.status().is_success() {
-            return Err(anyhow!("heartbeat: {}", res.text().await.unwrap_or_default()));
+            return Err(anyhow!(
+                "heartbeat: {}",
+                res.text().await.unwrap_or_default()
+            ));
         }
         Ok(res.json().await?)
     }
@@ -107,14 +114,14 @@ impl CoordinatorClient {
             .send()
             .await?;
         if !res.status().is_success() {
-            return Err(anyhow!("complete: {}", res.text().await.unwrap_or_default()));
+            return Err(anyhow!(
+                "complete: {}",
+                res.text().await.unwrap_or_default()
+            ));
         }
         let v: serde_json::Value = res.json().await?;
         let verified = v.get("verified").and_then(|x| x.as_bool()).unwrap_or(false);
-        let earn = v
-            .get("earnCredits")
-            .and_then(|x| x.as_f64())
-            .unwrap_or(0.0);
+        let earn = v.get("earnCredits").and_then(|x| x.as_f64()).unwrap_or(0.0);
         Ok((verified, earn))
     }
 

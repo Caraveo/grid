@@ -158,9 +158,7 @@ pub fn resolve_coords(cfg: &NodeConfig) -> Option<(f64, f64, String)> {
 
 /// Fetch the public mesh registry from grid-compute.com (or override URL).
 pub async fn fetch_registry(base: Option<&str>) -> Result<RegistrySnapshot> {
-    let base = base
-        .map(normalize_base)
-        .unwrap_or_else(registry_url);
+    let base = base.map(normalize_base).unwrap_or_else(registry_url);
     let url = format!("{base}/api/registry");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
@@ -188,10 +186,7 @@ pub fn print_registry(snap: &RegistrySnapshot, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(snap)?);
         return Ok(());
     }
-    let base = snap
-        .registry
-        .as_deref()
-        .unwrap_or(DEFAULT_REGISTRY_URL);
+    let base = snap.registry.as_deref().unwrap_or(DEFAULT_REGISTRY_URL);
     println!("GRID public mesh registry");
     println!("  url       {base}");
     println!("  phase     {}", snap.phase);
@@ -253,7 +248,10 @@ pub fn print_registry(snap: &RegistrySnapshot, json: bool) -> Result<()> {
         println!("  api       {base}/api/registry/computes?available=1");
     } else if !snap.computes.is_empty() {
         println!();
-        println!("Computes: {} listed — grid compute available", snap.computes.len());
+        println!(
+            "Computes: {} listed — grid compute available",
+            snap.computes.len()
+        );
     }
     Ok(())
 }

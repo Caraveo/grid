@@ -100,7 +100,10 @@ pub fn print_report(r: &BenchReport) {
     println!("=== GRID Benchmark ===");
     println!("CPU cores:     {}", r.cpu_cores);
     println!("Duration:      {:.2}s", r.duration_secs);
-    println!("Hash:          {:.1} MiB/s  ({:.0} ops/s @ 4KiB)", r.hash_mibs, r.hash_ops_per_sec);
+    println!(
+        "Hash:          {:.1} MiB/s  ({:.0} ops/s @ 4KiB)",
+        r.hash_mibs, r.hash_ops_per_sec
+    );
     println!("Memory seq:    {:.0} MiB/s", r.mem_mibs);
     println!("Host RAM:      {:.1} GB", r.memory_total_gb);
     println!("Composite:     {:.1} / 100", r.score);

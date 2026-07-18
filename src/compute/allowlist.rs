@@ -39,14 +39,19 @@ pub fn is_image_allowed(config_dir: &Path, image: &str) -> Result<bool> {
     // Minimal TOML parse: collect quoted strings after images
     for line in raw.lines() {
         let t = line.trim();
-        if let Some(rest) = t.strip_prefix('"').and_then(|s| s.strip_suffix("\",").or_else(|| s.strip_suffix('"'))) {
+        if let Some(rest) = t
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix("\",").or_else(|| s.strip_suffix('"')))
+        {
             if rest == image || image_matches(rest, image) {
                 return Ok(true);
             }
         }
     }
     // Also allow exact default list even if file edited oddly
-    Ok(DEFAULT_IMAGES.iter().any(|d| *d == image || image_matches(d, image)))
+    Ok(DEFAULT_IMAGES
+        .iter()
+        .any(|d| *d == image || image_matches(d, image)))
 }
 
 fn image_matches(allowed: &str, image: &str) -> bool {

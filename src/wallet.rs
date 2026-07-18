@@ -143,20 +143,12 @@ pub async fn send(
     Ok(tx)
 }
 
-pub fn receive_tx(
-    config_dir: &Path,
-    tx: ChainTx,
-    from_pubkey_hex: Option<&str>,
-) -> Result<()> {
+pub fn receive_tx(config_dir: &Path, tx: ChainTx, from_pubkey_hex: Option<&str>) -> Result<()> {
     if tx.kind != "send" && tx.kind != "receive" {
         bail!("expected send/receive tx");
     }
     let meta = WalletMeta::load(config_dir)?;
-    let to = tx
-        .to
-        .as_deref()
-        .context("missing to")?
-        .to_string();
+    let to = tx.to.as_deref().context("missing to")?.to_string();
     let to = normalize_address(&to)?;
     if to != meta.address {
         bail!("tx not for this wallet");
@@ -191,14 +183,7 @@ pub fn receive_tx(
     }
 
     let mut chain = ChainState::load(config_dir)?;
-    chain.credit_receive(
-        &to,
-        tx.amount,
-        &tx.id,
-        tx.from,
-        tx.memo,
-        tx.signature,
-    )?;
+    chain.credit_receive(&to, tx.amount, &tx.id, tx.from, tx.memo, tx.signature)?;
     chain.save(config_dir)?;
     Ok(())
 }
@@ -241,7 +226,10 @@ pub fn print_status(config_dir: &Path) -> Result<()> {
         Ok(m) => {
             println!("Wallet (key material only — balances live on-chain)");
             println!("  address:  {}", m.address);
-            println!("  balance:  {:.6} GRID (on-chain)", chain.balance(&m.address));
+            println!(
+                "  balance:  {:.6} GRID (on-chain)",
+                chain.balance(&m.address)
+            );
         }
         Err(_) => {
             println!("Wallet not initialized — grid wallet init");
@@ -315,7 +303,10 @@ pub fn burn_check(config_dir: &Path, dry_run: bool) -> Result<(f64, usize)> {
     let mut chain = ChainState::load(config_dir)?;
     let pending = chain.summarize_unclaimed();
     let expired: f64 = pending.iter().map(|p| p.expired_amount).sum();
-    println!("On-chain unclaimed: {:.6} GRID", pending.iter().map(|p| p.amount).sum::<f64>());
+    println!(
+        "On-chain unclaimed: {:.6} GRID",
+        pending.iter().map(|p| p.amount).sum::<f64>()
+    );
     println!("Past protocol deadline: {expired:.6} GRID");
     print_supply(&chain);
     if dry_run {
@@ -324,10 +315,7 @@ pub fn burn_check(config_dir: &Path, dry_run: bool) -> Result<(f64, usize)> {
     }
     let r = chain.apply_protocol_burns();
     chain.save(config_dir)?;
-    println!(
-        "✓ chain protocol burn: {:.6} GRID ({} lot(s))",
-        r.0, r.1
-    );
+    println!("✓ chain protocol burn: {:.6} GRID ({} lot(s))", r.0, r.1);
     print_supply(&chain);
     Ok(r)
 }

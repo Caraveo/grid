@@ -23,9 +23,7 @@ use tracing::{info, warn};
 use crate::compute::{list_computes, machine_id};
 use crate::config::NodeConfig;
 use crate::mesh_ping::{normalize_base, registry_url};
-use crate::passkey::{
-    operator_pubkey_hex, require_identity, sign_operator, verify_operator_sig,
-};
+use crate::passkey::{operator_pubkey_hex, require_identity, sign_operator, verify_operator_sig};
 
 const CLAIM_DOMAIN: &str = "GRID realm claim v1";
 
@@ -113,9 +111,9 @@ pub fn normalize_realm(raw: &str) -> Result<String> {
         bail!("realm name must be 2–32 chars (a-z 0-9 _ -)");
     }
     let reserved = [
-        "genesis", "home", "registry", "grid", "start", "newtab", "mesh", "peers",
-        "computes", "status", "about", "help", "docs", "settings", "config", "prefs",
-        "error", "www", "api", "admin",
+        "genesis", "home", "registry", "grid", "start", "newtab", "mesh", "peers", "computes",
+        "status", "about", "help", "docs", "settings", "config", "prefs", "error", "www", "api",
+        "admin",
     ];
     if reserved.contains(&s.as_str()) {
         bail!("reserved realm name '{s}'");
@@ -238,19 +236,9 @@ pub async fn claim_realm(config_dir: &Path, raw_name: &str) -> Result<RealmClaim
             .clone()
             .filter(|s| !s.is_empty())
             .unwrap_or(c.region);
-        (
-            c.node_id,
-            c.name,
-            c.class.to_string(),
-            region,
-        )
+        (c.node_id, c.name, c.class.to_string(), region)
     } else {
-        (
-            format!("node_{name}"),
-            name.clone(),
-            "S".into(),
-            "—".into(),
-        )
+        (format!("node_{name}"), name.clone(), "S".into(), "—".into())
     };
     let mid = machine_id(config_dir).unwrap_or_else(|_| "mach_unknown".into());
     let computes: Vec<String> = list_computes(config_dir)
@@ -397,7 +385,10 @@ async fn post_claim_to_registry(claim: &RealmClaim) -> Result<ClaimRegistryMeta>
             registered: Some(false),
         })
     } else {
-        bail!("HTTP {status}: {}", text.chars().take(240).collect::<String>());
+        bail!(
+            "HTTP {status}: {}",
+            text.chars().take(240).collect::<String>()
+        );
     }
 }
 
@@ -457,15 +448,28 @@ pub fn print_claim(claim: &RealmClaim) {
     println!("Realm claim");
     println!("  realm       {}", claim.realm);
     println!("  name        {}", claim.name);
-    println!("  operator    {}…", &claim.operator_pubkey[..16.min(claim.operator_pubkey.len())]);
+    println!(
+        "  operator    {}…",
+        &claim.operator_pubkey[..16.min(claim.operator_pubkey.len())]
+    );
     println!("  node        {} ({})", claim.node_label, claim.node_id);
     println!("  machine     {}", claim.machine_id);
     println!("  class       {}", claim.class);
     println!("  region      {}", claim.region);
-    println!("  computes    {}", if claim.computes.is_empty() { "(none)".into() } else { claim.computes.join(", ") });
+    println!(
+        "  computes    {}",
+        if claim.computes.is_empty() {
+            "(none)".into()
+        } else {
+            claim.computes.join(", ")
+        }
+    );
     println!("  claimed_at  {}", claim.claimed_at);
     println!("  body_hash   {}", claim.body_hash);
-    println!("  signature   {}…", &claim.signature[..16.min(claim.signature.len())]);
+    println!(
+        "  signature   {}…",
+        &claim.signature[..16.min(claim.signature.len())]
+    );
     println!(
         "  auth        mode={} passkey={} step_up={}",
         claim.auth.mode, claim.auth.passkey, claim.auth.session_step_up
@@ -487,10 +491,7 @@ pub fn print_list(config_dir: &Path) -> Result<()> {
         println!("  grid claim my-realm");
         return Ok(());
     }
-    println!(
-        "{:14} {:28} {:10} {}",
-        "NAME", "REALM", "AUTH", "CLAIMED"
-    );
+    println!("{:14} {:28} {:10} {}", "NAME", "REALM", "AUTH", "CLAIMED");
     for c in items {
         println!(
             "{:14} {:28} {:10} {}",

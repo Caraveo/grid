@@ -147,7 +147,10 @@ pub fn allocate_proportional(nodes: &[NodeScore], pool: f64) -> Vec<(String, f64
 
 /// Inclusion pool: class-S nodes only, proportional to score.
 pub fn allocate_inclusion(nodes: &[NodeScore], pool: f64) -> Vec<(String, f64)> {
-    let little: Vec<&NodeScore> = nodes.iter().filter(|n| n.class_s && n.score > 0.0).collect();
+    let little: Vec<&NodeScore> = nodes
+        .iter()
+        .filter(|n| n.class_s && n.score > 0.0)
+        .collect();
     if little.is_empty() || pool <= 0.0 {
         return nodes.iter().map(|n| (n.node_id.clone(), 0.0)).collect();
     }
@@ -217,7 +220,11 @@ mod tests {
         let pay = allocate_proportional(&nodes, 100.0);
         let whale = pay.iter().find(|(id, _)| id == "whale").unwrap().1;
         assert!(whale <= 5.0 + 1e-6, "whale={whale}");
-        let homes: f64 = pay.iter().filter(|(id, _)| id != "whale").map(|(_, p)| p).sum();
+        let homes: f64 = pay
+            .iter()
+            .filter(|(id, _)| id != "whale")
+            .map(|(_, p)| p)
+            .sum();
         assert!(homes >= 94.0, "homes={homes}");
     }
 

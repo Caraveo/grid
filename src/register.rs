@@ -389,7 +389,10 @@ pub fn print_pay_instructions(rec: &LocalRegRecord) {
     println!("║  Why pay?                                                  ║");
     println!("║  · Stops name squatting / spam on registry.grid            ║");
     println!("║  · Funds human review (employment) before activation       ║");
-    println!("║  · Donations accepted at {} anytime              ║", pad_tag(&rec.cashtag));
+    println!(
+        "║  · Donations accepted at {} anytime              ║",
+        pad_tag(&rec.cashtag)
+    );
     println!("╚══════════════════════════════════════════════════════════════╝");
     println!();
     println!("  Cash App link:");

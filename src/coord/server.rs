@@ -286,10 +286,10 @@ fn feed_auto_work(app: &App) {
             g.jobs
                 .get(*id)
                 .map(|j| {
-                j.status == "queued"
-                    && JobKind::parse(&j.kind)
-                        .map(|k| k.track() == JobTrack::Mine)
-                        .unwrap_or(true)
+                    j.status == "queued"
+                        && JobKind::parse(&j.kind)
+                            .map(|k| k.track() == JobTrack::Mine)
+                            .unwrap_or(true)
                 })
                 .unwrap_or(false)
         })
@@ -336,10 +336,10 @@ fn feed_auto_work(app: &App) {
             g.jobs
                 .get(*id)
                 .map(|j| {
-                j.status == "queued"
-                    && JobKind::parse(&j.kind)
-                        .map(|k| k.track() == JobTrack::Host)
-                        .unwrap_or(false)
+                    j.status == "queued"
+                        && JobKind::parse(&j.kind)
+                            .map(|k| k.track() == JobTrack::Host)
+                            .unwrap_or(false)
                 })
                 .unwrap_or(false)
         })
@@ -735,24 +735,24 @@ async fn complete_job(
         );
         settlement = Some(record);
         if earnings_enabled() {
-        // On-chain mint (unclaimed). Protocol burns live on the chain, not node/wallet.
+            // On-chain mint (unclaimed). Protocol burns live on the chain, not node/wallet.
             let root = app.data_dir.parent().unwrap_or(app.data_dir.as_path());
-        let mut chain = ChainState::load(root).unwrap_or_default();
-        earn = chain.mint_unclaimed(&body.node_id, &body.job_id, raw, &commit);
-        let _ = chain.save(root);
-        if earn > 0.0 {
-            g.earn.credit_job(
-                &body.node_id,
-                &body.job_id,
-                earn,
-                &commit,
-                Utc::now().to_rfc3339(),
-            );
-            if let Some(node) = g.nodes.get_mut(&body.node_id) {
-                node.earn_total += earn;
+            let mut chain = ChainState::load(root).unwrap_or_default();
+            earn = chain.mint_unclaimed(&body.node_id, &body.job_id, raw, &commit);
+            let _ = chain.save(root);
+            if earn > 0.0 {
+                g.earn.credit_job(
+                    &body.node_id,
+                    &body.job_id,
+                    earn,
+                    &commit,
+                    Utc::now().to_rfc3339(),
+                );
+                if let Some(node) = g.nodes.get_mut(&body.node_id) {
+                    node.earn_total += earn;
+                }
             }
         }
-    }
     }
 
     let job_out = {

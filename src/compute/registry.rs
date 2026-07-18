@@ -116,7 +116,10 @@ pub async fn announce_computes(config_dir: &Path, node_id: &str, label: &str) {
 
     match req.send().await {
         Ok(res) if res.status().is_success() => {
-            info!("compute registry announce ok → {url} ({} compute(s))", items.len());
+            info!(
+                "compute registry announce ok → {url} ({} compute(s))",
+                items.len()
+            );
         }
         Ok(res) => {
             let status = res.status();
@@ -128,10 +131,7 @@ pub async fn announce_computes(config_dir: &Path, node_id: &str, label: &str) {
 }
 
 /// Fetch compute registry (optionally only available).
-pub async fn fetch_computes(
-    base: Option<&str>,
-    available_only: bool,
-) -> Result<ComputesResponse> {
+pub async fn fetch_computes(base: Option<&str>, available_only: bool) -> Result<ComputesResponse> {
     let base = base.map(normalize_base).unwrap_or_else(registry_url);
     let url = if available_only {
         format!("{base}/api/registry/computes?available=1")

@@ -147,7 +147,11 @@ fn local_mac_ref() -> String {
             let s = String::from_utf8_lossy(&out.stdout);
             for line in s.lines() {
                 if let Some(idx) = line.find("ether ") {
-                    let mac = line[idx + 6..].trim().split_whitespace().next().unwrap_or("");
+                    let mac = line[idx + 6..]
+                        .trim()
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("");
                     if mac.len() >= 11 {
                         return mac.to_lowercase();
                     }
@@ -331,13 +335,13 @@ pub async fn p2p_announce(config_dir: &Path, realm: &str, listen: &str) -> Resul
 pub async fn resolve_dial(query: &str) -> Result<Vec<(String, String, String)>> {
     let base = registry_url();
     let q = query.trim();
-    let url = if q.len() == GP_ID_HEX_LEN && q.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        format!("{base}/api/registry/p2p?gpId={q}")
-    } else {
-        let realm = normalize_realm(q)?;
-        format!("{base}/api/registry/p2p?realm={realm}")
-    };
+    let url =
+        if q.len() == GP_ID_HEX_LEN && q.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            format!("{base}/api/registry/p2p?gpId={q}")
+        } else {
+            let realm = normalize_realm(q)?;
+            format!("{base}/api/registry/p2p?realm={realm}")
+        };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
@@ -444,7 +448,11 @@ pub async fn verify_remote_cert(realm: &str) -> Result<RemoteCert> {
         .build()?;
     let res = client.get(&url).send().await.context("fetch cert")?;
     let v: serde_json::Value = res.json().await?;
-    if !v.get("certActive").and_then(|x| x.as_bool()).unwrap_or(false) {
+    if !v
+        .get("certActive")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
         bail!("no active permanent cert for grid://{realm}.grid");
     }
     let cert: RemoteCert = serde_json::from_value(

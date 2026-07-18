@@ -203,20 +203,21 @@ pub async fn status(config_dir: &Path, raw: &str) -> Result<EmberStatus> {
 
     let host_mine = daemon_running();
     let (announced, announce_detail, registry_free) = registry_presence(&name).await;
-    let activation = register::fetch_activation(&name)
-        .await
-        .unwrap_or(register::ActivationStatus {
-            name: name.clone(),
-            realm: realm.clone(),
-            activated: false,
-            status: "unknown".into(),
-            fee_usd: 5.0,
-            cashtag: "$Caraveo".into(),
-            payment_note: None,
-            cash_app_url: None,
-            message: "could not reach registry".into(),
-            donations_note: "Donations accepted at $Caraveo.".into(),
-        });
+    let activation =
+        register::fetch_activation(&name)
+            .await
+            .unwrap_or(register::ActivationStatus {
+                name: name.clone(),
+                realm: realm.clone(),
+                activated: false,
+                status: "unknown".into(),
+                fee_usd: 5.0,
+                cashtag: "$Caraveo".into(),
+                payment_note: None,
+                cash_app_url: None,
+                message: "could not reach registry".into(),
+                donations_note: "Donations accepted at $Caraveo.".into(),
+            });
     let activated = activation.activated;
     let reg_url = registry_url();
     // Registry leg of ember = paid activation (required) + optional live announce
@@ -252,7 +253,9 @@ pub async fn status(config_dir: &Path, raw: &str) -> Result<EmberStatus> {
             activation.fee_usd, activation.cashtag
         )
     } else if can_start && host_mine && activated && !announced {
-        format!("Activated — announce capacity: grid compute announce  (or grid ember {name} --start)")
+        format!(
+            "Activated — announce capacity: grid compute announce  (or grid ember {name} --start)"
+        )
     } else if can_start && host_mine {
         format!("Ember running (host+mine) — finish checklist for {realm}")
     } else if can_start {
@@ -299,7 +302,10 @@ pub async fn status(config_dir: &Path, raw: &str) -> Result<EmberStatus> {
 pub fn print_status(s: &EmberStatus) {
     println!("EMBER  ·  host + mine + compute + registry");
     println!("  realm       {}", s.realm);
-    println!("  ready       {}", if s.ready { "YES ✓" } else { "not yet" });
+    println!(
+        "  ready       {}",
+        if s.ready { "YES ✓" } else { "not yet" }
+    );
     println!("  can_start   {}", if s.can_start { "YES" } else { "no" });
     println!();
     println!("  Checklist");

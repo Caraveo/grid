@@ -105,8 +105,8 @@ impl NodeConfig {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let raw =
+            std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
         let root: FileRoot = toml::from_str(&raw)?;
         Ok(root.node)
     }
@@ -156,8 +156,8 @@ mod tests {
     #[test]
     fn roundtrip_config() {
         let dir = tempdir().unwrap();
-        let (cfg, path) = NodeConfig::init(dir.path(), "test", NodeClass::S, "http://127.0.0.1:8787")
-            .unwrap();
+        let (cfg, path) =
+            NodeConfig::init(dir.path(), "test", NodeClass::S, "http://127.0.0.1:8787").unwrap();
         let loaded = NodeConfig::load(&path).unwrap();
         assert_eq!(loaded.name, "test");
         assert_eq!(loaded.node_id, cfg.node_id);
