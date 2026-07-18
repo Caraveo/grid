@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.6-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.7-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -142,6 +142,10 @@ Announce: `POST /api/registry/computes` (same webhook secret as mesh ping). No I
 Work kind: `blake3_work` payload `seed|iterations` (default 250k iterated BLAKE3).
 Coordinator verifies by re-computing the digest. Credits land in `~/.grid/earn.json`
 and `~/.grid/coord/state.json` (survive restarts).
+
+Earnings are **disabled by default** for private-network safety. Jobs can be
+verified without minting value. Do not enable `GRID_ENABLE_EARN=1` until signed
+replica settlement has been independently validated and audited.
 
 ```bash
 # optional: submit extra PoR yourself

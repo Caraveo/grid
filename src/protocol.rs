@@ -67,6 +67,10 @@ pub struct Job {
     pub created_at: String,
     #[serde(default = "default_timeout")]
     pub timeout_sec: u64,
+    /// Immutable coordinator commitment to the job the launcher submitted.
+    /// A completion is eligible only when it verifies against this intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_commitment: Option<String>,
     #[serde(default)]
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,12 +118,19 @@ pub struct NodeInfo {
     pub jobs_failed: u64,
     #[serde(default)]
     pub earn_total: f64,
+    /// Replica-visible reliability factor. Starts neutral, rises only after
+    /// verified intent-matching work, and falls sharply on mismatches.
+    #[serde(default = "one_f64")]
+    pub reputation: f64,
     #[serde(default)]
     pub label: String,
 }
 
 fn one() -> u32 {
     1
+}
+fn one_f64() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,5 +151,19 @@ pub fn result_commitment(
 ) -> String {
     let flag = if ok { "1" } else { "0" };
     let canonical = format!("{job_id}|{node_id}|{flag}|{output}|{duration_ms}");
+    crate::crypto::sha256_hex(canonical.as_bytes())
+}
+
+/// Canonical commitment to the executable job intent.  The coordinator creates
+/// this before a job enters the queue; workers never supply or modify it.
+pub fn job_intent_commitment(
+    job_id: &str,
+    kind: &str,
+    payload: &str,
+    created_at: &str,
+    timeout_sec: u64,
+) -> String {
+    let canonical =
+        format!("GRID-JOB-INTENT-v1|{job_id}|{kind}|{payload}|{created_at}|{timeout_sec}");
     crate::crypto::sha256_hex(canonical.as_bytes())
 }

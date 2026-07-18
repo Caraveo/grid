@@ -22,14 +22,15 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use uuid::Uuid;
 
+use crate::blockchain::Settlement;
+use crate::chain::{ChainState, MAX_SUPPLY};
 use crate::earn::EarnLedger;
 use crate::executor::{expected_output, fabric_work_payload, DEFAULT_BLAKE3_ITERS};
 use crate::por::{
     allocate_inclusion, allocate_proportional, effective_score, inputs_from_jobs, split_emission,
     NodeScore,
 };
-use crate::protocol::{result_commitment, Job, JobKind, JobTrack, NodeInfo};
-use crate::chain::{ChainState, MAX_SUPPLY};
+use crate::protocol::{job_intent_commitment, result_commitment, Job, JobKind, JobTrack, NodeInfo};
 use crate::tsl::TransactSecurityLayer;
 
 /// Credits per verified **mine** (PoR / transactional security) event — slower earn.
@@ -41,6 +42,16 @@ const AUTO_WORK_TARGET_QUEUED: usize = 8;
 const AUTO_WORK_ITERS: u64 = DEFAULT_BLAKE3_ITERS;
 /// Optional host demo jobs (allowlisted echo) when auto_work on.
 const AUTO_HOST_TARGET_QUEUED: usize = 2;
+
+/// Fail closed: a private pilot can verify jobs without accidentally creating
+/// value. Public issuance requires explicit operator activation after replica
+/// validation/audit work is complete.
+fn earnings_enabled() -> bool {
+    matches!(
+        std::env::var("GRID_ENABLE_EARN").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
 
 #[derive(Clone)]
 struct App {
@@ -55,6 +66,8 @@ struct PersistedState {
     queue: VecDeque<String>,
     nodes: HashMap<String, NodeInfo>,
     earn: EarnLedger,
+    #[serde(default)]
+    settlements: Vec<Settlement>,
     work_seq: u64,
 }
 
@@ -63,6 +76,7 @@ struct Store {
     queue: VecDeque<String>,
     nodes: HashMap<String, NodeInfo>,
     earn: EarnLedger,
+    settlements: Vec<Settlement>,
     work_seq: u64,
     dirty: bool,
 }
@@ -74,6 +88,7 @@ impl Store {
             queue: VecDeque::new(),
             nodes: HashMap::new(),
             earn: EarnLedger::default(),
+            settlements: vec![],
             work_seq: 0,
             dirty: false,
         }
@@ -85,6 +100,7 @@ impl Store {
             queue: p.queue,
             nodes: p.nodes,
             earn: p.earn,
+            settlements: p.settlements,
             work_seq: p.work_seq,
             dirty: false,
         }
@@ -96,6 +112,7 @@ impl Store {
             queue: self.queue.clone(),
             nodes: self.nodes.clone(),
             earn: self.earn.clone(),
+            settlements: self.settlements.clone(),
             work_seq: self.work_seq,
         }
     }
@@ -196,8 +213,18 @@ fn banner_coord(addr: &SocketAddr, opts: &CoordOptions) {
     println!("GRID coordinator (pilot fabric)");
     println!("  listen     http://{addr}");
     println!("  data       {}", opts.data_dir.display());
-    println!("  auto-work  {}", if opts.auto_work { "on · blake3_work" } else { "off" });
-    println!("  TSL        {}", TransactSecurityLayer::default().describe());
+    println!(
+        "  auto-work  {}",
+        if opts.auto_work {
+            "on · blake3_work"
+        } else {
+            "off"
+        }
+    );
+    println!(
+        "  TSL        {}",
+        TransactSecurityLayer::default().describe()
+    );
     println!("  routes     POST /v1/jobs · heartbeat · claim · complete · GET /v1/stats /v1/earn");
 }
 
@@ -207,12 +234,15 @@ fn feed_auto_work(app: &App) {
         .queue
         .iter()
         .filter(|id| {
-            g.jobs.get(*id).map(|j| {
+            g.jobs
+                .get(*id)
+                .map(|j| {
                 j.status == "queued"
                     && JobKind::parse(&j.kind)
                         .map(|k| k.track() == JobTrack::Mine)
                         .unwrap_or(true)
-            }).unwrap_or(false)
+                })
+                .unwrap_or(false)
         })
         .count();
     if mine_queued < AUTO_WORK_TARGET_QUEUED {
@@ -227,12 +257,21 @@ fn feed_auto_work(app: &App) {
                 payload,
                 created_at: Utc::now().to_rfc3339(),
                 timeout_sec: 180,
+                intent_commitment: None,
                 status: "queued".into(),
                 assigned_node_id: None,
                 earn_credits: None,
                 result_commitment: None,
                 operator_pubkey: None,
             };
+            let mut job = job;
+            job.intent_commitment = Some(job_intent_commitment(
+                &job.id,
+                &job.kind,
+                &job.payload,
+                &job.created_at,
+                job.timeout_sec,
+            ));
             g.queue.push_back(job.id.clone());
             g.jobs.insert(job.id.clone(), job);
             g.dirty = true;
@@ -244,12 +283,15 @@ fn feed_auto_work(app: &App) {
         .queue
         .iter()
         .filter(|id| {
-            g.jobs.get(*id).map(|j| {
+            g.jobs
+                .get(*id)
+                .map(|j| {
                 j.status == "queued"
                     && JobKind::parse(&j.kind)
                         .map(|k| k.track() == JobTrack::Host)
                         .unwrap_or(false)
-            }).unwrap_or(false)
+                })
+                .unwrap_or(false)
         })
         .count();
     if host_queued < AUTO_HOST_TARGET_QUEUED {
@@ -272,12 +314,21 @@ fn feed_auto_work(app: &App) {
                 payload,
                 created_at: Utc::now().to_rfc3339(),
                 timeout_sec: 120,
+                intent_commitment: None,
                 status: "queued".into(),
                 assigned_node_id: None,
                 earn_credits: None,
                 result_commitment: None,
                 operator_pubkey: None,
             };
+            let mut job = job;
+            job.intent_commitment = Some(job_intent_commitment(
+                &job.id,
+                &job.kind,
+                &job.payload,
+                &job.created_at,
+                job.timeout_sec,
+            ));
             g.queue.push_back(job.id.clone());
             g.jobs.insert(job.id.clone(), job);
             g.dirty = true;
@@ -337,7 +388,9 @@ async fn create_job(
     State(app): State<App>,
     Json(body): Json<CreateJobBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let kind_s = body.kind.unwrap_or_else(|| JobKind::Blake3Work.as_str().into());
+    let kind_s = body
+        .kind
+        .unwrap_or_else(|| JobKind::Blake3Work.as_str().into());
     JobKind::parse(&kind_s).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let payload = body.payload.unwrap_or_else(|| {
         fabric_work_payload(Utc::now().timestamp() as u64, 0, DEFAULT_BLAKE3_ITERS)
@@ -357,12 +410,21 @@ async fn create_job(
         payload,
         created_at: Utc::now().to_rfc3339(),
         timeout_sec: body.timeout_sec.unwrap_or(180),
+        intent_commitment: None,
         status: "queued".into(),
         assigned_node_id: None,
         earn_credits: None,
         result_commitment: None,
         operator_pubkey: None,
     };
+    let mut job = job;
+    job.intent_commitment = Some(job_intent_commitment(
+        &job.id,
+        &job.kind,
+        &job.payload,
+        &job.created_at,
+        job.timeout_sec,
+    ));
     let mut g = app.inner.lock();
     g.queue.push_back(job.id.clone());
     g.jobs.insert(job.id.clone(), job.clone());
@@ -393,10 +455,7 @@ struct HeartbeatBody {
     label: Option<String>,
 }
 
-async fn heartbeat(
-    State(app): State<App>,
-    Json(body): Json<HeartbeatBody>,
-) -> impl IntoResponse {
+async fn heartbeat(State(app): State<App>, Json(body): Json<HeartbeatBody>) -> impl IntoResponse {
     let mut g = app.inner.lock();
     let existing = g.nodes.get(&body.node_id).cloned();
     let rec = NodeInfo {
@@ -404,13 +463,12 @@ async fn heartbeat(
         class: body.class.unwrap_or_else(|| "S".into()),
         gpu_model: body.gpu_model.unwrap_or_else(|| "cpu".into()),
         max_concurrent: body.max_concurrent.unwrap_or(1),
-        cluster_id: body
-            .cluster_id
-            .unwrap_or_else(|| body.node_id.clone()),
+        cluster_id: body.cluster_id.unwrap_or_else(|| body.node_id.clone()),
         last_seen: Utc::now().timestamp_millis(),
         jobs_done: existing.as_ref().map(|e| e.jobs_done).unwrap_or(0),
         jobs_failed: existing.as_ref().map(|e| e.jobs_failed).unwrap_or(0),
         earn_total: existing.as_ref().map(|e| e.earn_total).unwrap_or(0.0),
+        reputation: existing.as_ref().map(|e| e.reputation).unwrap_or(1.0),
         label: body
             .label
             .or_else(|| existing.map(|e| e.label))
@@ -445,10 +503,7 @@ fn track_matches(job_kind: &str, want: &str) -> bool {
     }
 }
 
-async fn claim(
-    State(app): State<App>,
-    Json(body): Json<ClaimBody>,
-) -> impl IntoResponse {
+async fn claim(State(app): State<App>, Json(body): Json<ClaimBody>) -> impl IntoResponse {
     let mut g = app.inner.lock();
     if !g.nodes.contains_key(&body.node_id) {
         return (
@@ -474,20 +529,25 @@ async fn claim(
                 job.assigned_node_id = Some(body.node_id.clone());
                 let job_out = job.clone();
                 g.dirty = true;
-                return (
-                    StatusCode::OK,
-                    Json(serde_json::json!({ "job": job_out })),
-                )
+                return (StatusCode::OK, Json(serde_json::json!({ "job": job_out })))
                     .into_response();
             }
         } else {
             // put back non-matching still-queued jobs
-            if g.jobs.get(&id).map(|j| j.status == "queued").unwrap_or(false) {
+            if g.jobs
+                .get(&id)
+                .map(|j| j.status == "queued")
+                .unwrap_or(false)
+            {
                 g.queue.push_back(id);
             }
         }
     }
-    (StatusCode::NO_CONTENT, Json(serde_json::json!({ "job": null }))).into_response()
+    (
+        StatusCode::NO_CONTENT,
+        Json(serde_json::json!({ "job": null })),
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -508,7 +568,7 @@ async fn complete_job(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let mut g = app.inner.lock();
 
-    let (kind_s, payload, assigned) = {
+    let (kind_s, payload, assigned, intent) = {
         let job = g
             .jobs
             .get(&body.job_id)
@@ -517,6 +577,15 @@ async fn complete_job(
             job.kind.clone(),
             job.payload.clone(),
             job.assigned_node_id.clone(),
+            job.intent_commitment.clone().unwrap_or_else(|| {
+                job_intent_commitment(
+                    &job.id,
+                    &job.kind,
+                    &job.payload,
+                    &job.created_at,
+                    job.timeout_sec,
+                )
+            }),
         )
     };
 
@@ -551,24 +620,34 @@ async fn complete_job(
     if let Some(node) = g.nodes.get_mut(&body.node_id) {
         if verified {
             node.jobs_done += 1;
+            node.reputation = (node.reputation + 0.02).min(1.5);
         } else {
             node.jobs_failed += 1;
+            node.reputation = (node.reputation - 0.15).max(0.5);
         }
     }
 
     let mut earn = 0.0;
+    let mut settlement = None;
     if verified {
         let pool = if kind.track() == JobTrack::Host {
             HOST_EVENT_MINT
         } else {
             POR_EVENT_MINT
         };
-        let raw = credit_event(&mut g, &body.node_id, pool);
+        let (raw, record) = credit_event(
+            &g,
+            &body.node_id,
+            pool,
+            &body.job_id,
+            kind.track(),
+            &intent,
+            &commit,
+        );
+        settlement = Some(record);
+        if earnings_enabled() {
         // On-chain mint (unclaimed). Protocol burns live on the chain, not node/wallet.
-        let root = app
-            .data_dir
-            .parent()
-            .unwrap_or(app.data_dir.as_path());
+            let root = app.data_dir.parent().unwrap_or(app.data_dir.as_path());
         let mut chain = ChainState::load(root).unwrap_or_default();
         earn = chain.mint_unclaimed(&body.node_id, &body.job_id, raw, &commit);
         let _ = chain.save(root);
@@ -584,6 +663,7 @@ async fn complete_job(
                 node.earn_total += earn;
             }
         }
+    }
     }
 
     let job_out = {
@@ -605,6 +685,9 @@ async fn complete_job(
         }
         job.clone()
     };
+    if let Some(record) = settlement {
+        g.settlements.push(record);
+    }
 
     g.dirty = true;
 
@@ -614,16 +697,26 @@ async fn complete_job(
         "earnCredits": earn,
         "commitment": commit,
         "tsl": "bitcoin",
+        "earningsEnabled": earnings_enabled(),
     })))
 }
 
-fn credit_event(store: &mut Store, winner: &str, event_mint: f64) -> f64 {
+fn credit_event(
+    store: &Store,
+    winner: &str,
+    event_mint: f64,
+    job_id: &str,
+    track: JobTrack,
+    intent: &str,
+    result: &str,
+) -> (f64, Settlement) {
     let scores: Vec<NodeScore> = store
         .nodes
         .values()
         .map(|n| {
             let online = Utc::now().timestamp_millis() - n.last_seen < 60_000;
-            let inputs = inputs_from_jobs(n.jobs_done, n.jobs_failed, online);
+            let mut inputs = inputs_from_jobs(n.jobs_done, n.jobs_failed, online);
+            inputs.reputation = n.reputation;
             NodeScore {
                 node_id: n.node_id.clone(),
                 cluster_id: if n.cluster_id.is_empty() {
@@ -651,7 +744,19 @@ fn credit_event(store: &mut Store, winner: &str, event_mint: f64) -> f64 {
     if pay < 0.01 {
         pay = 1.0;
     }
-    pay
+    let settlement = Settlement::from_scores(
+        job_id.into(),
+        match track {
+            JobTrack::Host => "host",
+            JobTrack::Mine => "mine",
+        }
+        .into(),
+        intent.into(),
+        result.into(),
+        event_mint,
+        &scores,
+    );
+    (pay, settlement)
 }
 
 async fn stats(State(app): State<App>) -> impl IntoResponse {
@@ -672,7 +777,12 @@ async fn stats(State(app): State<App>) -> impl IntoResponse {
     let queued = g
         .queue
         .iter()
-        .filter(|id| g.jobs.get(*id).map(|j| j.status == "queued").unwrap_or(false))
+        .filter(|id| {
+            g.jobs
+                .get(*id)
+                .map(|j| j.status == "queued")
+                .unwrap_or(false)
+        })
         .count();
     let verified = g.jobs.values().filter(|j| j.status == "verified").count();
     let nodes: Vec<_> = g.nodes.values().cloned().collect();

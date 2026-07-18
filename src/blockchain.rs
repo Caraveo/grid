@@ -40,6 +40,11 @@ pub struct Block {
 pub struct Settlement {
     pub job_id: String,
     pub track: String,
+    /// Hash of the launcher-signed job specification/intent.
+    pub intent_commitment: String,
+    /// Hash of the independently verified output.
+    pub result_commitment: String,
+    pub verified: bool,
     pub pool: f64,
     pub nodes: Vec<SettlementNode>,
     pub allocations: Vec<SettlementAllocation>,
@@ -62,8 +67,53 @@ pub struct SettlementAllocation {
 }
 
 impl Settlement {
+    pub fn from_scores(
+        job_id: String,
+        track: String,
+        intent_commitment: String,
+        result_commitment: String,
+        pool: f64,
+        scores: &[NodeScore],
+    ) -> Self {
+        let (prop, inclusion) = split_emission(pool);
+        let mut allocations = std::collections::BTreeMap::<String, f64>::new();
+        for (id, amount) in allocate_proportional(scores, prop) {
+            *allocations.entry(id).or_default() += amount;
+        }
+        for (id, amount) in allocate_inclusion(scores, inclusion) {
+            *allocations.entry(id).or_default() += amount;
+        }
+        Self {
+            job_id,
+            track,
+            intent_commitment,
+            result_commitment,
+            verified: true,
+            pool,
+            nodes: scores
+                .iter()
+                .map(|n| SettlementNode {
+                    node_id: n.node_id.clone(),
+                    cluster_id: n.cluster_id.clone(),
+                    score: n.score,
+                    class_s: n.class_s,
+                })
+                .collect(),
+            allocations: allocations
+                .into_iter()
+                .map(|(node_id, amount)| SettlementAllocation { node_id, amount })
+                .collect(),
+        }
+    }
+
     /// Replica-side deterministic replay. No coordinator amount is trusted.
     pub fn verify(&self) -> Result<()> {
+        if !self.verified
+            || self.intent_commitment.len() != 64
+            || self.result_commitment.len() != 64
+        {
+            bail!("unverified or intent-mismatched settlement cannot allocate rewards");
+        }
         if self.pool <= 0.0 || !self.pool.is_finite() || self.nodes.is_empty() {
             bail!("invalid settlement inputs");
         }
