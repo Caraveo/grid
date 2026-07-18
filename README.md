@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.8-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.9-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -123,6 +123,12 @@ grid wallet
 ```
 
 Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). The host runtime is **containerd via nerdctl**; GRID refuses to fall back to Docker.
+
+Runtime support: Linux runs rootless containerd/nerdctl directly. macOS uses a
+dedicated rootless Lima Linux VM. Windows runs the identical Linux workflow in
+WSL2; run `powershell -ExecutionPolicy Bypass -File scripts/install-runtime.ps1`
+to check it. Native Windows containers are intentionally not used for GRID host
+jobs because their isolation controls do not match the Linux contract.
 
 ### Launcher container access
 

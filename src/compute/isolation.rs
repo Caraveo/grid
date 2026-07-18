@@ -1,7 +1,9 @@
 //! Hard isolation defaults — container never owns the host.
 
-/// Docker run args for maximum practical containment (no host mounts).
-pub fn docker_isolation_args(cpus: f64, memory_mb: u64, network: bool) -> Vec<String> {
+/// nerdctl/containerd Linux run args for maximum practical containment (no
+/// host mounts). GRID host execution is Linux-only: on Windows use WSL2 and
+/// run this same Linux containerd path instead of weaker native flags.
+pub fn containerd_isolation_args(cpus: f64, memory_mb: u64, network: bool) -> Vec<String> {
     let mut args = vec![
         "--read-only".into(),
         "--tmpfs".into(),

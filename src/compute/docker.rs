@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 use tokio::process::Command as AsyncCommand;
 
-use super::isolation::docker_isolation_args;
+use super::isolation::containerd_isolation_args;
 use super::manifest::ComputeManifest;
 use super::serve::ContainerJobSpec;
 
@@ -19,8 +19,22 @@ impl std::fmt::Display for ContainerdError {
 }
 impl std::error::Error for ContainerdError {}
 
+#[cfg(target_os = "windows")]
+const DEFAULT_NERDCTL: &str = "nerdctl.exe";
+#[cfg(not(target_os = "windows"))]
+const DEFAULT_NERDCTL: &str = "nerdctl";
+
+/// Command is configurable for a local wrapper, notably macOS Lima. The
+/// executable name only (not shell text) is accepted to prevent injection.
+fn nerdctl_bin() -> String {
+    std::env::var("GRID_NERDCTL_BIN")
+        .ok()
+        .filter(|s| !s.trim().is_empty() && !s.contains(['/', '\\', ' ', '\t', '\n']))
+        .unwrap_or_else(|| DEFAULT_NERDCTL.into())
+}
+
 pub async fn containerd_available() -> bool {
-    AsyncCommand::new("nerdctl")
+    AsyncCommand::new(nerdctl_bin())
         .args(["info"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -33,14 +47,14 @@ pub async fn containerd_available() -> bool {
 /// Register capacity: pull allowlisted image. Jobs are one-shot isolated runs
 /// (no long-lived host-mounted containers).
 pub async fn ensure_capacity(m: &ComputeManifest) -> Result<Vec<String>> {
-    let pull = AsyncCommand::new("nerdctl")
+    let pull = AsyncCommand::new(nerdctl_bin())
         .args(["pull", &m.image])
         .output()
         .await
         .context("containerd/nerdctl pull")?;
     if !pull.status.success() {
         // Image may already be local
-        let inspect = AsyncCommand::new("nerdctl")
+        let inspect = AsyncCommand::new(nerdctl_bin())
             .args(["image", "inspect", &m.image])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -60,17 +74,17 @@ pub async fn ensure_capacity(m: &ComputeManifest) -> Result<Vec<String>> {
 }
 
 pub fn stop_container(id: &str) -> Result<()> {
-    let _ = Command::new("nerdctl").args(["stop", id]).status();
+    let _ = Command::new(nerdctl_bin()).args(["stop", id]).status();
     Ok(())
 }
 
 pub fn rm_container(id: &str) -> Result<()> {
-    let _ = Command::new("nerdctl").args(["rm", "-f", id]).status();
+    let _ = Command::new(nerdctl_bin()).args(["rm", "-f", id]).status();
     Ok(())
 }
 
 pub fn logs(id: &str, follow: bool) -> Result<()> {
-    let mut cmd = Command::new("nerdctl");
+    let mut cmd = Command::new(nerdctl_bin());
     cmd.arg("logs");
     if follow {
         cmd.arg("-f");
@@ -97,7 +111,7 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
         "--label".into(),
         "grid.job=1".into(),
     ];
-    args.extend(docker_isolation_args(
+    args.extend(containerd_isolation_args(
         spec.cpus,
         spec.memory_mb,
         spec.network,
@@ -120,7 +134,7 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
         args.push(c.clone());
     }
 
-    let child = AsyncCommand::new("nerdctl")
+    let child = AsyncCommand::new(nerdctl_bin())
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -131,11 +145,15 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
-            let _ = Command::new("nerdctl").args(["rm", "-f", &cname]).status();
+            let _ = Command::new(nerdctl_bin())
+                .args(["rm", "-f", &cname])
+                .status();
             bail!("containerd/nerdctl wait: {e}");
         }
         Err(_) => {
-            let _ = Command::new("nerdctl").args(["rm", "-f", &cname]).status();
+            let _ = Command::new(nerdctl_bin())
+                .args(["rm", "-f", &cname])
+                .status();
             return Ok((
                 false,
                 format!("timeout after {}s", spec.timeout_sec),
