@@ -3,7 +3,7 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl jq
+apt-get install -y --no-install-recommends ca-certificates certbot curl jq nginx python3-certbot-nginx
 
 install -d -m 0755 /opt/grid/bin
 install -d -m 0700 -o ubuntu -g ubuntu /var/lib/grid

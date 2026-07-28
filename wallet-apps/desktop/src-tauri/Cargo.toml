@@ -1,6 +1,6 @@
 [package]
 name = "grid-wallet-desktop"
-version = "0.1.0"
+version = "0.1.2"
 description = "Official GRID wallet for Windows and Linux"
 authors = ["GRID Contributors"]
 edition = "2021"

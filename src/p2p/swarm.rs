@@ -268,6 +268,7 @@ async fn handle_connection(
 
     let tx_ping = tx.clone();
     let pending_w = pending_pings.clone();
+    let chain_dir = opts.config_dir.clone();
     let ping_task = tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(5));
         let mut nonce = 1u64;
@@ -279,6 +280,18 @@ async fn handle_connection(
                 ts_ms: Utc::now().timestamp_millis(),
             };
             if tx_ping.send(msg).await.is_err() {
+                break;
+            }
+            let from_height = crate::blockchain::ChainReplica::load(&chain_dir)
+                .ok()
+                .flatten()
+                .map(|replica| replica.tip().height.saturating_add(1))
+                .unwrap_or(0);
+            if tx_ping
+                .send(Message::GetBlocks { from_height })
+                .await
+                .is_err()
+            {
                 break;
             }
             nonce = nonce.wrapping_add(1);

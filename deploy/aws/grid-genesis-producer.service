@@ -1,5 +1,5 @@
 [Unit]
-Description=GRID canonical Genesis P2P peer
+Description=GRID signed settlement block producer
 After=network-online.target grid-genesis-truth.service
 Wants=network-online.target
 
@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-ExecStart=/opt/grid/bin/grid --config-dir /var/lib/grid peer --listen 0.0.0.0:9900 --no-genesis --noise-key-file /var/lib/grid/p2p-noise.key --id genesis --name Genesis --class S
+EnvironmentFile=/etc/grid/producer.env
+ExecStart=/opt/grid/bin/grid --config-dir /var/lib/grid genesis produce --operational --coordinator https://coordinator.grid-compute.com --poll-secs 5 --batch 25
 Restart=always
-RestartSec=3
+RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "grid-wallet-desktop"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "grid",
  "serde",

@@ -52,6 +52,7 @@ async fn run_operator(
     let config_dir = std::env::var_os("GRID_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(NodeConfig::default_dir);
+    let host_metrics = crate::resources::collect().ok();
 
     let operator_pubkey = std::fs::read_to_string(config_dir.join("keys").join("operator.pub"))
         .ok()
@@ -139,6 +140,7 @@ async fn run_operator(
         let cdir = config_dir.clone();
         let operator_hb = operator_pubkey.clone();
         let wallet_hb = solana_reward_wallet.clone();
+        let metrics_hb = host_metrics.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
             loop {
@@ -153,6 +155,7 @@ async fn run_operator(
                         Some(&label),
                         operator_hb.as_deref(),
                         wallet_hb.as_deref(),
+                        metrics_hb.as_ref(),
                     )
                     .await
                 {
@@ -177,6 +180,7 @@ async fn run_operator(
             Some(&cfg.name),
             operator_pubkey.as_deref(),
             solana_reward_wallet.as_deref(),
+            host_metrics.as_ref(),
         )
         .await
         .ok();

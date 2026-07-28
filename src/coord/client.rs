@@ -36,6 +36,7 @@ impl CoordinatorClient {
         label: Option<&str>,
         operator_pubkey: Option<&str>,
         solana_reward_wallet: Option<&str>,
+        metrics: Option<&crate::resources::HostMetrics>,
     ) -> Result<NodeInfo> {
         let mut body = serde_json::json!({
             "nodeId": node_id,
@@ -52,6 +53,31 @@ impl CoordinatorClient {
         }
         if let Some(wallet) = solana_reward_wallet {
             body["solanaRewardWallet"] = serde_json::json!(wallet);
+        }
+        if let Some(metrics) = metrics {
+            let gpu_count = if gpu_model.trim().is_empty()
+                || matches!(gpu_model.trim().to_ascii_lowercase().as_str(), "cpu" | "none" | "n/a")
+            {
+                0
+            } else {
+                gpu_model
+                    .split([',', '+'])
+                    .filter(|model| !model.trim().is_empty())
+                    .count()
+                    .max(1)
+            };
+            body["cpuModel"] = serde_json::json!(metrics.cpu_model);
+            body["cpuPhysicalCores"] = serde_json::json!(metrics.cpu_physical_cores);
+            body["cpuThreads"] = serde_json::json!(metrics.cpu_cores);
+            body["cpuFrequencyMhz"] = serde_json::json!(metrics.cpu_frequency_mhz);
+            body["cpuUsagePct"] = serde_json::json!(metrics.cpu_usage_pct);
+            body["memoryTotalGb"] = serde_json::json!(metrics.memory_total_gb);
+            body["memoryAvailableGb"] =
+                serde_json::json!((metrics.memory_total_gb - metrics.memory_used_gb).max(0.0));
+            body["storageTotalGb"] = serde_json::json!(metrics.storage_total_gb);
+            body["storageAvailableGb"] = serde_json::json!(metrics.storage_available_gb);
+            body["cpuGflopsEstimate"] = serde_json::json!(metrics.cpu_flops_est);
+            body["gpuCount"] = serde_json::json!(gpu_count);
         }
         let res = self
             .http

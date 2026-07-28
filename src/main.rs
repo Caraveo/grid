@@ -210,6 +210,9 @@ enum Commands {
         /// Do not dial the canonical Genesis peer (for the Genesis host itself)
         #[arg(long)]
         no_genesis: bool,
+        /// Dedicated mode-0600 Noise key for a non-interactive P2P service
+        #[arg(long)]
+        noise_key_file: Option<PathBuf>,
         /// Optional: run bench first and advertise score in hello
         #[arg(long)]
         with_bench: bool,
@@ -527,6 +530,25 @@ enum GenesisCmd {
         /// Load a mode-0600 operational key on a dedicated Genesis host
         #[arg(long)]
         operational: bool,
+    },
+    /// Poll verified coordinator settlements and produce signed GRID blocks
+    Produce {
+        #[arg(
+            long,
+            env = "GRID_COORDINATOR",
+            default_value = "https://coordinator.grid-compute.com"
+        )]
+        coordinator: String,
+        #[arg(long, default_value = "5")]
+        poll_secs: u64,
+        #[arg(long, default_value = "25")]
+        batch: usize,
+        /// Load the mode-0600 operational leader on a dedicated Genesis host
+        #[arg(long)]
+        operational: bool,
+        /// Produce at most one block, or exit successfully if the queue is empty
+        #[arg(long)]
+        once: bool,
     },
     /// Track a peer (local secret key required)
     Track {
@@ -922,6 +944,7 @@ async fn main() -> Result<()> {
             listen,
             mut connect,
             no_genesis,
+            noise_key_file,
             with_bench,
             id,
             name,
@@ -972,8 +995,16 @@ async fn main() -> Result<()> {
             } else {
                 (None, None, None)
             };
-            let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted P2P").await?;
-            let noise_static_key = grid::passkey::p2p_noise_static_key(&config_dir, &dek)?;
+            let noise_static_key = if let Some(path) = noise_key_file {
+                let raw = std::fs::read(&path)?;
+                raw.as_slice()
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("P2P Noise key must be exactly 32 bytes"))?
+            } else {
+                let dek =
+                    grid::passkey::require_unlocked(&config_dir, "start encrypted P2P").await?;
+                grid::passkey::p2p_noise_static_key(&config_dir, &dek)?
+            };
             let opts = PeerOptions {
                 node_id,
                 name: node_name,
@@ -1481,6 +1512,38 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
                 load_protected(config_dir, &dek)?
             };
             run_genesis_server(config_dir.clone(), &bind, keys).await?;
+        }
+        GenesisCmd::Produce {
+            coordinator,
+            poll_secs,
+            batch,
+            operational,
+            once,
+        } => {
+            let secret = std::env::var("GRID_CHAIN_SECRET")
+                .map_err(|_| anyhow::anyhow!("GRID_CHAIN_SECRET is required"))?;
+            let keys = if operational {
+                grid::genesis::load_keypair(config_dir)?
+            } else {
+                let dek = grid::passkey::require_identity(
+                    config_dir,
+                    "produce signed GRID blocks",
+                )
+                .await?;
+                load_protected(config_dir, &dek)?
+            };
+            grid::genesis::run_block_producer(
+                keys,
+                grid::genesis::ProducerOptions {
+                    config_dir: config_dir.clone(),
+                    coordinator,
+                    secret,
+                    poll: Duration::from_secs(poll_secs.max(1)),
+                    batch,
+                    once,
+                },
+            )
+            .await?;
         }
         GenesisCmd::Track {
             id,

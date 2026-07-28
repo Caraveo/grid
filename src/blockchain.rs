@@ -197,7 +197,7 @@ impl ChainReplica {
             recovery_pubkeys,
             blocks: vec![],
         };
-        let genesis = signed_block(keys, &chain_id, 0, "", &state, vec![])?;
+        let genesis = signed_block(keys, &chain_id, 0, "", &state, vec![], vec![])?;
         replica.blocks.push(genesis);
         replica.verify()?;
         Ok(replica)
@@ -213,6 +213,16 @@ impl ChainReplica {
         state: &ChainState,
         txs: Vec<ChainTx>,
     ) -> Result<Block> {
+        self.append_leader_block_with_settlements(keys, state, txs, vec![])
+    }
+
+    pub fn append_leader_block_with_settlements(
+        &mut self,
+        keys: &GenesisKeys,
+        state: &ChainState,
+        txs: Vec<ChainTx>,
+        settlements: Vec<Settlement>,
+    ) -> Result<Block> {
         if keys.public_hex() != self.leader_pubkey {
             bail!("only configured leader may propose blocks");
         }
@@ -223,6 +233,7 @@ impl ChainReplica {
             &block_hash(self.tip())?,
             state,
             txs,
+            settlements,
         )?;
         self.apply_replica_block(b.clone())?;
         Ok(b)
@@ -285,6 +296,7 @@ fn signed_block(
     previous_hash: &str,
     state: &ChainState,
     transactions: Vec<ChainTx>,
+    settlements: Vec<Settlement>,
 ) -> Result<Block> {
     let mut b = Block {
         version: 1,
@@ -295,7 +307,7 @@ fn signed_block(
         leader_pubkey: keys.public_hex(),
         state_root: state_root(state)?,
         transactions,
-        settlements: vec![],
+        settlements,
         signature: String::new(),
     };
     b.signature = keys.sign(&signing_bytes(&b)?);
