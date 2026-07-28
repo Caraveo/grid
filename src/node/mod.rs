@@ -57,6 +57,11 @@ async fn run_operator(
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    let solana_reward_wallet = std::env::var("GRID_SOLANA_REWARD_WALLET")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| cfg.solana_reward_wallet.clone());
 
     let mode_label = match mode {
         OperatorMode::Host => "HOST (useful compute · higher earn)",
@@ -73,6 +78,12 @@ async fn run_operator(
     if let Some(ref pk) = operator_pubkey {
         let short = if pk.len() > 16 { &pk[..16] } else { pk };
         println!("  operator     {short}…");
+    }
+    if let Some(ref wallet) = solana_reward_wallet {
+        let short = if wallet.len() > 16 { &wallet[..16] } else { wallet };
+        println!("  solana       {short}… (devnet rewards)");
+    } else {
+        println!("  solana       off (run grid init with --solana-wallet)");
     }
     println!("  registry     {}", mesh_ping::registry_url());
     if mesh_ping::resolve_coords(&cfg).is_some() {
@@ -227,6 +238,7 @@ async fn run_operator(
                         &result.output,
                         result.duration_ms,
                         operator_pubkey.as_deref(),
+                        solana_reward_wallet.as_deref(),
                     )
                     .await
                 {
@@ -277,7 +289,7 @@ fn mirror_earn(config_dir: &Path, node_id: &str, job_id: &str, earn: f64, commit
         let _ = ledger.save(&path);
     } else if earn > 0.0 {
         tracing::warn!(
-            "on-chain mint blocked (10B cap or duplicate job) — claim/exit so protocol burns free headroom job={job_id}"
+            "pilot mint blocked (5B compute cap, hourly cap, or duplicate job) job={job_id}"
         );
     }
 }

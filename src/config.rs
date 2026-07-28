@@ -49,6 +49,9 @@ pub struct NodeConfig {
     pub region: String,
     #[serde(default = "default_coordinator")]
     pub coordinator: String,
+    /// Solana wallet that receives verified GRID mining rewards (devnet pilot).
+    #[serde(default)]
+    pub solana_reward_wallet: Option<String>,
     #[serde(default = "default_gpu")]
     pub gpu_model: String,
     #[serde(default = "default_poll_ms")]
@@ -72,7 +75,7 @@ fn default_region() -> String {
     "local".into()
 }
 fn default_coordinator() -> String {
-    "http://127.0.0.1:8787".into()
+    "https://coordinator.grid-compute.com".into()
 }
 fn default_gpu() -> String {
     "cpu".into()
@@ -134,6 +137,7 @@ impl NodeConfig {
             class,
             region: default_region(),
             coordinator: coordinator.into(),
+            solana_reward_wallet: None,
             gpu_model: default_gpu(),
             poll_ms: default_poll_ms(),
             max_concurrent: default_max_concurrent(),

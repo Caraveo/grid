@@ -1,15 +1,18 @@
-# GRID Contracts (P3 stubs)
+# GRID settlement contracts
 
 **Do not deploy to mainnet without audit.**
 
-Planned modules (see `technical.md` + token spec):
+GRID's first utility rail is Solana. The devnet implementation now lives in the
+standalone workspace at `../../grid-solana/` and creates a standard SPL token
+while preserving the existing GRID issuance rules:
 
-| Contract | Role |
-| --- | --- |
-| `GRIDToken.sol` | Capped ERC-20 |
-| `EmissionController.sol` | Epoch mint, γ whale cap, inclusion pool |
-| `GenesisLock.sol` | Year-1 earn vesting |
-| `NodeRegistry.sol` | Bonds + class |
-| `JobEscrow.sol` | Post–Genesis capacity payments |
+- 10 billion GRID maximum circulating supply
+- 10,000 GRID maximum issuance per one-hour epoch
+- one reward per verified job ID
+- no freeze authority
+- devnet-only deployment guard
 
-Stubs land in a follow-up when P1 demo is stable. Prefer OpenZeppelin + Foundry.
+The current issuer is deliberately an operator-controlled **prototype relayer**,
+not a trustless emission controller. It must not be used for a public sale or
+mainnet launch. An audited Solana program and multisig mint authority are required
+before mainnet.

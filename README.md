@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.16-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.17-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -154,6 +154,21 @@ grid compute list
 grid stats
 grid wallet
 ```
+
+### Automatic Solana devnet rewards
+
+The pilot coordinator can forward each verified `grid mine` or `grid host`
+settlement to the localhost-only GRID Solana reward relayer. Set the miner's
+devnet payout address before starting the node:
+
+```bash
+export GRID_SOLANA_REWARD_WALLET=YOUR_SOLANA_DEVNET_WALLET
+grid mine
+```
+
+The coordinator operator must enable earnings and configure the local relayer.
+The relayer setup and issuer instructions live in the standalone
+`grid-solana` repository. Mainnet is intentionally refused by that relayer.
 
 Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). The host runtime is **containerd via nerdctl**; GRID refuses to fall back to Docker.
 
@@ -347,7 +362,7 @@ Operators and users need more than a CLI. **Edge wallets** are first-class clien
 | **Bitcoin TSL** | Cash-out and high-value finality prefer **BTC**; GRID is utility for compute |
 | **Same identity story** | Node id / operator cluster / wallet address link without forcing one UI |
 | **Least custody** | Default non-custodial; optional “services” tier for teams who want managed ops |
-| **No public testnet token** | Wallet product tracks **mainnet / Genesis Earn** economics only |
+| **Devnet is non-economic** | Solana devnet validates token controls and wallet UX; devnet GRID has no value |
 
 ### Surface map
 
@@ -441,4 +456,4 @@ grid node
 grid submit --wait
 ```
 
-*No public testnet economy. Mainnet path. Bitcoin secures the exit.*
+*Solana devnet is for testing only. Mainnet requires audit and multisig. Bitcoin secures the exit.*

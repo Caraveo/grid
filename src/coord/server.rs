@@ -639,6 +639,69 @@ struct CompleteBody {
     duration_ms: u64,
     #[serde(default)]
     operator_pubkey: Option<String>,
+    #[serde(default)]
+    solana_reward_wallet: Option<String>,
+}
+
+fn queue_devnet_solana_reward(
+    job_id: String,
+    recipient: String,
+    amount: f64,
+    commitment: String,
+) -> bool {
+    let Ok(base) = std::env::var("GRID_SOLANA_RELAYER_URL") else {
+        return false;
+    };
+    let Ok(secret) = std::env::var("GRID_SOLANA_RELAYER_SECRET") else {
+        tracing::warn!("GRID_SOLANA_RELAYER_URL is set but GRID_SOLANA_RELAYER_SECRET is missing");
+        return false;
+    };
+    let Ok(url) = url::Url::parse(&base) else {
+        tracing::warn!("invalid GRID_SOLANA_RELAYER_URL");
+        return false;
+    };
+    if !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1")) {
+        tracing::warn!("refusing non-local GRID_SOLANA_RELAYER_URL");
+        return false;
+    }
+    let Ok(endpoint) = url.join("/v1/rewards") else {
+        tracing::warn!("invalid GRID Solana reward endpoint");
+        return false;
+    };
+
+    tokio::spawn(async move {
+        let result = reqwest::Client::new()
+            .post(endpoint)
+            .bearer_auth(secret)
+            .json(&serde_json::json!({
+                "jobId": job_id,
+                "recipient": recipient,
+                "amount": format!("{amount:.9}"),
+                "commitment": commitment,
+            }))
+            .send()
+            .await;
+        match result {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<serde_json::Value>().await {
+                    Ok(body) => tracing::info!(
+                        "Solana devnet GRID minted job={} signature={} explorer={}",
+                        job_id,
+                        body.get("signature").and_then(|v| v.as_str()).unwrap_or("?"),
+                        body.get("explorer").and_then(|v| v.as_str()).unwrap_or("?"),
+                    ),
+                    Err(error) => tracing::warn!("Solana reward response decode failed: {error}"),
+                }
+            }
+            Ok(response) => {
+                let status = response.status();
+                let detail = response.text().await.unwrap_or_default();
+                tracing::warn!("Solana devnet reward rejected ({status}): {detail}");
+            }
+            Err(error) => tracing::warn!("Solana devnet reward relayer unavailable: {error}"),
+        }
+    });
+    true
 }
 
 async fn complete_job(
@@ -779,6 +842,21 @@ async fn complete_job(
     }
 
     g.dirty = true;
+    let solana_reward_queued = if earn > 0.0 {
+        body.solana_reward_wallet
+            .clone()
+            .map(|wallet| {
+                queue_devnet_solana_reward(
+                    body.job_id.clone(),
+                    wallet,
+                    earn,
+                    commit.clone(),
+                )
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     Ok(Json(serde_json::json!({
         "job": job_out,
@@ -787,6 +865,7 @@ async fn complete_job(
         "commitment": commit,
         "tsl": "bitcoin",
         "earningsEnabled": earnings_enabled(),
+        "solanaRewardQueued": solana_reward_queued,
     })))
 }
 

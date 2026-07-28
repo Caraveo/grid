@@ -226,7 +226,10 @@ When \(\pi_t\) rises, node rewards become more attractive in fiat terms (via mar
 
 ## Growth Methodology (Assumptions)
 
-We assume a **three-phase cold start** on **mainnet from day one** (no separate public testnet economy):
+We assume a **three-phase cold start** with a **non-economic Solana devnet
+prototype** before mainnet. Devnet tokens have no monetary value and exist only
+to test mint controls, settlement reconciliation, wallet behavior, and operator
+UX:
 
 1. **Genesis Earn Year (months 0–12):** miners earn GRID for verified useful work under a hard epoch emission ceiling, but **earned tokens are not freely spendable for network capacity** during this year—they accrue under a time-lock / vesting unlock (assumed linear unlock over months 12–18, or cliff at month 12). Work is **not free** for buyers either: foundation and early partners may run paid pilot jobs in stablecoin or locked GRID, while open token-for-capacity markets fully open after Genesis. Goal: measure hardware, prove PoR, distribute ownership to operators **without** flooding a hot spend market or letting a hyperscaler drain the float.
 2. **Open utility (months 12–36):** capacity market live; one primary workload wedge (assumed: **GPU inference + batch AI jobs**, then rendering) drives organic token demand; emissions taper.
@@ -275,11 +278,11 @@ links:
 | --- | --- |
 | Name | GRID |
 | Symbol | GRID |
-| Standard | ERC-20 (and bridged equivalents) **or** equivalent on chosen utility rail |
-| Decimals | 18 |
+| Standard | Solana SPL Token |
+| Decimals | 9 |
 | Max supply | \(10 \times 10^9\) GRID (10 billion, hard capped) |
 | **Transact Security Layer** | **Bitcoin** |
-| Utility / metering rail | Fast L2 or app-chain for job escrow (implementation choice; not the TSL) |
+| Utility / metering rail | Solana programs for issuance and job escrow (not the TSL) |
 | Native gas on utility rail | Chain gas (not GRID); GRID meters **compute**, not blockspace |
 | Primary quote / exit | **BTC** first; USDC for fiat off-ramps |
 
@@ -773,7 +776,14 @@ The outstanding social and technical result is **miner continuity with useful wo
 
 The outstanding product result is a path from batch capacity to **critical-latency digital life**: competitive P2P gaming, live worlds, and spatial sessions where milliseconds are the market. In that future, edge miners are not nostalgia—they are how the fabric stays fast enough to feel fair.
 
-By assuming a hard-capped ERC-20 on a low-fee L2, a 45% ten-year emission budget for node operators, reputation-weighted rewards, a 90/10 proportional–inclusion emission split, latency-bounded placement with premium critical pricing, and an 85/10/5 settlement split, this specification provides a complete, implementable path from white-paper vision to economic mainnet. The protocol does not need to own planetary hardware; it needs to **measure work, settle value, protect open participation, honor the miner, and keep exit liquidity honest**.
+By assuming a standard SPL token on Solana with guarded, hard-capped issuance,
+a 45% ten-year emission budget for node operators, reputation-weighted rewards,
+a 90/10 proportional–inclusion emission split, latency-bounded placement with
+premium critical pricing, and an 85/10/5 settlement split, this specification
+provides a complete, implementable path from white-paper vision to economic
+mainnet. The protocol does not need to own planetary hardware; it needs to
+**measure work, settle value, protect open participation, honor the miner, and
+keep exit liquidity honest**.
 
 Future work includes mainnet calibration of \(R_{i,t}\), formal verification of escrow contracts, stablecoin-quoted jobs with automatic GRID conversion, measurement of little-miner share under datacenter load, latency SLA experiments for competitive session placement, and governance procedures for parameter changes after empirical measurement.
 

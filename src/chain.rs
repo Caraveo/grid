@@ -22,12 +22,13 @@ use uuid::Uuid;
 use crate::address::{is_valid_address, normalize_address};
 
 /// Hard ceiling on circulating GRID.
-pub const MAX_SUPPLY: f64 = 10_000_000_000.0;
+/// Compute-reward allocation enforced by the pilot reward ledger.
+pub const MAX_SUPPLY: f64 = 5_000_000_000.0;
 /// Unclaimed mint older than this is burned by protocol.
 pub const BURN_DEADLINE_DAYS: i64 = 365;
 /// Maximum newly-issued GRID per one-hour protocol epoch until governance
 /// deliberately changes the signed chain configuration.
-pub const DEFAULT_EPOCH_BUDGET: f64 = 10_000.0;
+pub const DEFAULT_EPOCH_BUDGET: f64 = 25_000.0;
 const EMISSION_EPOCH_SECS: i64 = 3600;
 
 const CHAIN_FILE: &str = "chain.json";
@@ -142,9 +143,9 @@ impl ChainState {
         }
         let raw = std::fs::read_to_string(&p)?;
         let mut s: Self = serde_json::from_str(&raw)?;
-        if s.max_supply <= 0.0 {
-            s.max_supply = MAX_SUPPLY;
-        }
+        // Protocol constants win over stale pilot files after an allocation update.
+        s.max_supply = MAX_SUPPLY;
+        s.epoch_budget = DEFAULT_EPOCH_BUDGET;
         Ok(s)
     }
 
@@ -242,7 +243,7 @@ impl ChainState {
         (burned, lots)
     }
 
-    /// Mint work reward as **unclaimed** on-chain lot (capped by 10B).
+    /// Mint work reward as an unclaimed pilot lot (capped by the 5B compute allocation).
     /// Returns actual amount minted (0 if cap full).
     pub fn mint_unclaimed(
         &mut self,

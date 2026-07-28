@@ -51,10 +51,13 @@ enum Commands {
         class: String,
         #[arg(
             long,
-            default_value = "http://127.0.0.1:8787",
+            default_value = "https://coordinator.grid-compute.com",
             env = "GRID_COORDINATOR"
         )]
         coordinator: String,
+        /// Solana wallet for verified GRID rewards (devnet pilot)
+        #[arg(long, env = "GRID_SOLANA_REWARD_WALLET")]
+        solana_wallet: Option<String>,
     },
 
     /// Run the persistent pilot coordinator (auto blake3_work by default)
@@ -158,7 +161,7 @@ enum Commands {
         #[arg(
             long,
             env = "GRID_COORDINATOR",
-            default_value = "http://127.0.0.1:8787"
+            default_value = "https://coordinator.grid-compute.com"
         )]
         coordinator: String,
         #[arg(long)]
@@ -170,7 +173,7 @@ enum Commands {
         #[arg(
             long,
             env = "GRID_COORDINATOR",
-            default_value = "http://127.0.0.1:8787"
+            default_value = "https://coordinator.grid-compute.com"
         )]
         coordinator: String,
     },
@@ -550,20 +553,26 @@ async fn main() -> Result<()> {
             name,
             class,
             coordinator,
+            solana_wallet,
         } => {
             let class = NodeClass::parse(&class)?;
-            let (cfg, path) = NodeConfig::init(&config_dir, name, class, coordinator)?;
+            let (mut cfg, path) = NodeConfig::init(&config_dir, name, class, coordinator)?;
+            cfg.solana_reward_wallet = solana_wallet;
+            cfg.save(&path)?;
             println!("✓ Node initialized");
             println!("  Name:     {}", cfg.name);
             println!("  Node ID:  {}", cfg.node_id);
             println!("  Class:    {} (S=home · M=rack · L=datacenter)", cfg.class);
             println!("  Coord:    {}", cfg.coordinator);
+            println!(
+                "  Solana:   {}",
+                cfg.solana_reward_wallet.as_deref().unwrap_or("not configured")
+            );
             println!("  Config:   {}", path.display());
             println!("\nNext:");
-            println!("  grid coord");
+            println!("  grid mine            # security PoR + devnet GRID rewards");
             println!("  grid launch garage --public");
-            println!("  grid host            # useful work · higher earn");
-            println!("  grid mine            # security PoR · slower earn");
+            println!("  grid host            # useful work (public verifier coming later)");
         }
 
         Commands::Coord {
@@ -1515,7 +1524,7 @@ fn load_cfg(
             class,
             coordinator
                 .clone()
-                .unwrap_or_else(|| "http://127.0.0.1:8787".into()),
+                .unwrap_or_else(|| "https://coordinator.grid-compute.com".into()),
         )?;
         println!("(wrote {})", p.display());
         c

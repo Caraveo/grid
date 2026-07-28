@@ -157,14 +157,15 @@ One image family → easy sandboxing and verification.
 | DB | **Postgres** (SQLite for laptop demo) | Boring and solid |
 | Queue | Postgres + `FOR UPDATE SKIP LOCKED` or Redis | Avoid Kafka early |
 | Containers | Docker + NVIDIA runtime | Miners already understand this |
-| Chain (P3) | Solidity on **Base** | Low fees, USDC culture |
+| Chain (P3) | Standard SPL token + audited Solana programs | Low fees, mature token and wallet ecosystem |
 | Frontend | Next.js minimal or CLI-only first | Don’t burn months on UI |
 
 *Stack is a recommendation, not religion. Consistency > perfection.*
 
 ### Token contracts (P3 modules only)
-1. `GRIDToken` — ERC-20, capped mint roles  
-2. `EmissionController` — epoch budget, whale \(\gamma\) cap, inclusion pool  
+
+1. `GRIDToken` — standard Solana SPL token, 9 decimals, no freeze authority
+2. `GRIDEmissionController` — capped mint authority, epoch budget, receipt replay protection
 3. `GenesisLock` — earn-year vesting  
 4. `NodeRegistry` — bonds, class, cluster id  
 5. `JobEscrow` — post–Genesis Earn only  
@@ -227,7 +228,9 @@ Full surface plan lives in **[README.md § Edge wallets](./README.md#edge-wallet
 | **Web** | Buyer portal + wallet connect |
 | **Services** | Fleet API, payroll to BTC, optional custody policies |
 
-**Constraint:** no public testnet token economy; wallets speak **Genesis Earn / mainnet** only. **Bitcoin = TSL** for cash-out.
+**Constraint:** Solana devnet is a non-economic engineering environment only;
+devnet GRID has no monetary value. Wallets must label it clearly and must not
+present it as Genesis Earn/mainnet value. **Bitcoin = TSL** for cash-out.
 
 ## 9. What to implement next
 

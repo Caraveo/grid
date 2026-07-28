@@ -96,6 +96,7 @@ impl CoordinatorClient {
         output: &str,
         duration_ms: u64,
         operator_pubkey: Option<&str>,
+        solana_reward_wallet: Option<&str>,
     ) -> Result<(bool, f64)> {
         let mut body = serde_json::json!({
             "jobId": job_id,
@@ -106,6 +107,9 @@ impl CoordinatorClient {
         });
         if let Some(pk) = operator_pubkey {
             body["operatorPubkey"] = serde_json::json!(pk);
+        }
+        if let Some(wallet) = solana_reward_wallet {
+            body["solanaRewardWallet"] = serde_json::json!(wallet);
         }
         let res = self
             .http
