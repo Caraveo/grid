@@ -31,6 +31,7 @@ pub mod por;
 pub mod protocol;
 pub mod register;
 pub mod resources;
+pub mod solana_wallet;
 pub mod supply;
 pub mod tsl;
 

@@ -243,6 +243,12 @@ enum Commands {
         action: Option<WalletCmd>,
     },
 
+    /// Solana reward wallet — create, import, and inspect devnet GRID
+    Solana {
+        #[command(subcommand)]
+        action: Option<SolanaCmd>,
+    },
+
     /// Public mesh registry (default: https://grid-compute.com)
     Registry {
         /// Override registry base URL
@@ -443,6 +449,19 @@ enum WalletCmd {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum SolanaCmd {
+    /// Create a new local Solana reward keypair (stored mode 0600)
+    Create,
+    /// Use an existing Solana address (watch-only; no private key imported)
+    Import {
+        /// Solana wallet address that should receive mined GRID
+        address: String,
+    },
+    /// Show configured address and live devnet GRID balance
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -943,6 +962,25 @@ async fn main() -> Result<()> {
 
         Commands::Wallet { action } => {
             run_wallet(&config_dir, action.unwrap_or(WalletCmd::Status)).await?;
+        }
+
+        Commands::Solana { action } => {
+            match action.unwrap_or(SolanaCmd::Status) {
+                SolanaCmd::Create => {
+                    let address = grid::solana_wallet::create(&config_dir)?;
+                    println!("✓ Solana reward wallet created");
+                    println!("  address  {address}");
+                    println!("  keypair  {}", config_dir.join("keys/solana-reward.json").display());
+                    println!("  network  devnet");
+                    println!("  backup this keypair; GRID cannot recover it");
+                }
+                SolanaCmd::Import { address } => {
+                    let address = grid::solana_wallet::import_address(&config_dir, &address)?;
+                    println!("✓ Solana reward address configured (watch-only)");
+                    println!("  address  {address}");
+                }
+                SolanaCmd::Status => grid::solana_wallet::status(&config_dir).await?,
+            }
         }
 
         Commands::Claim {

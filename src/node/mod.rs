@@ -137,12 +137,23 @@ async fn run_operator(
         let label = cfg.name.clone();
         let cfg_hb = cfg.clone();
         let cdir = config_dir.clone();
+        let operator_hb = operator_pubkey.clone();
+        let wallet_hb = solana_reward_wallet.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
             loop {
                 tick.tick().await;
                 match client
-                    .heartbeat(&id, &class, &gpu, max_c, &cluster, Some(&label))
+                    .heartbeat(
+                        &id,
+                        &class,
+                        &gpu,
+                        max_c,
+                        &cluster,
+                        Some(&label),
+                        operator_hb.as_deref(),
+                        wallet_hb.as_deref(),
+                    )
                     .await
                 {
                     Ok(_) => {
@@ -164,6 +175,8 @@ async fn run_operator(
             cfg.max_concurrent,
             cfg.cluster(),
             Some(&cfg.name),
+            operator_pubkey.as_deref(),
+            solana_reward_wallet.as_deref(),
         )
         .await
         .ok();

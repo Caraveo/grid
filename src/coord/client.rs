@@ -34,6 +34,8 @@ impl CoordinatorClient {
         max_concurrent: u32,
         cluster_id: &str,
         label: Option<&str>,
+        operator_pubkey: Option<&str>,
+        solana_reward_wallet: Option<&str>,
     ) -> Result<NodeInfo> {
         let mut body = serde_json::json!({
             "nodeId": node_id,
@@ -44,6 +46,12 @@ impl CoordinatorClient {
         });
         if let Some(l) = label {
             body["label"] = serde_json::json!(l);
+        }
+        if let Some(pk) = operator_pubkey {
+            body["operatorPubkey"] = serde_json::json!(pk);
+        }
+        if let Some(wallet) = solana_reward_wallet {
+            body["solanaRewardWallet"] = serde_json::json!(wallet);
         }
         let res = self
             .http

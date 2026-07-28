@@ -1,6 +1,6 @@
 [package]
 name = "grid"
-version = "0.2.17"
+version = "0.2.18"
 edition = "2021"
 authors = ["GRID Contributors"]
 description = "GRID Phase 1 — useful mining CLI (Bitcoin TSL, PoR earn)"
@@ -38,6 +38,7 @@ dirs = "5.0"
 parking_lot = "0.12"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 rand = "0.8"
+bs58 = "0.5"
 aes-gcm = "0.10"
 rpassword = "7"
 url = "2"
