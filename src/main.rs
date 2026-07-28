@@ -25,6 +25,11 @@ use grid::p2p::{run_peer, PeerOptions};
 use grid::resources;
 use grid::tsl::TransactSecurityLayer;
 
+const DEFAULT_COORDINATOR: &str = "https://coordinator.grid-compute.com";
+const DEFAULT_GENESIS_PEER: &str = grid::genesis::CANONICAL_P2P_PEER;
+const DEFAULT_GENESIS_URL: &str = grid::genesis::CANONICAL_TRUTH_URL;
+const DEFAULT_GENESIS_PUBKEY: &str = grid::genesis::CANONICAL_LEADER_PUBKEY;
+
 #[derive(Parser)]
 #[command(name = "grid")]
 #[command(about = "GRID — host useful compute · mine security PoR · Bitcoin TSL")]
@@ -104,7 +109,7 @@ enum Commands {
 
     /// HOST — pull useful container work, serve isolated, higher earn
     Host {
-        #[arg(long, env = "GRID_COORDINATOR")]
+        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
         /// Only serve jobs for this compute name
         #[arg(long)]
@@ -117,7 +122,7 @@ enum Commands {
 
     /// MINE — PoR / transactional security work, slower earn
     Mine {
-        #[arg(long, env = "GRID_COORDINATOR")]
+        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
         #[arg(long, env = "GRID_NODE_ID")]
         id: Option<String>,
@@ -133,7 +138,7 @@ enum Commands {
 
     /// Host + mine together (one-box)
     Node {
-        #[arg(long, env = "GRID_COORDINATOR")]
+        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
         #[arg(long, env = "GRID_NODE_ID")]
         id: Option<String>,
@@ -147,7 +152,7 @@ enum Commands {
 
     /// Alias for `grid node` (host + mine)
     Start {
-        #[arg(long, env = "GRID_COORDINATOR")]
+        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
     },
 
@@ -197,11 +202,14 @@ enum Commands {
     /// Join the minimal TCP P2P mesh (hello, ping RTT, peer gossip)
     Peer {
         /// Listen address host:port
-        #[arg(long, default_value = "127.0.0.1:9900")]
+        #[arg(long, default_value = "0.0.0.0:9900")]
         listen: String,
-        /// Dial these peers (repeatable)
+        /// Dial these peers (repeatable; Genesis is included automatically)
         #[arg(long = "connect")]
         connect: Vec<String>,
+        /// Do not dial the canonical Genesis peer (for the Genesis host itself)
+        #[arg(long)]
+        no_genesis: bool,
         /// Optional: run bench first and advertise score in hello
         #[arg(long)]
         with_bench: bool,
@@ -212,10 +220,14 @@ enum Commands {
         #[arg(long, default_value = "S")]
         class: String,
         /// Genesis truth URL — ban list source of truth
-        #[arg(long, env = "GRID_GENESIS")]
+        #[arg(long, env = "GRID_GENESIS", default_value = DEFAULT_GENESIS_URL)]
         genesis: Option<String>,
         /// Genesis public key hex (trust anchor)
-        #[arg(long, env = "GRID_GENESIS_PUBKEY")]
+        #[arg(
+            long,
+            env = "GRID_GENESIS_PUBKEY",
+            default_value = DEFAULT_GENESIS_PUBKEY
+        )]
         genesis_pubkey: Option<String>,
         /// Bind GP identity + announce dial directory for this realm
         #[arg(long)]
@@ -512,6 +524,9 @@ enum GenesisCmd {
     Serve {
         #[arg(long, default_value = "127.0.0.1:9100")]
         bind: String,
+        /// Load a mode-0600 operational key on a dedicated Genesis host
+        #[arg(long)]
+        operational: bool,
     },
     /// Track a peer (local secret key required)
     Track {
@@ -547,6 +562,12 @@ enum GenesisCmd {
     List,
     /// Print genesis public key hex
     Pubkey,
+    /// Export the leader key to a new 0600 file for a dedicated Genesis host
+    #[command(hide = true)]
+    ExportLeader {
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Fetch & verify remote truth (for operators)
     Truth {
         #[arg(long, env = "GRID_GENESIS", default_value = "http://127.0.0.1:9100")]
@@ -899,7 +920,8 @@ async fn main() -> Result<()> {
 
         Commands::Peer {
             listen,
-            connect,
+            mut connect,
+            no_genesis,
             with_bench,
             id,
             name,
@@ -911,6 +933,9 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            if !no_genesis && !connect.iter().any(|peer| peer == DEFAULT_GENESIS_PEER) {
+                connect.insert(0, DEFAULT_GENESIS_PEER.to_string());
+            }
             let path = NodeConfig::path_in(&config_dir);
             let (node_id, node_name) = if path.exists() {
                 let c = NodeConfig::load(&path)?;
@@ -1396,8 +1421,8 @@ async fn run_auth(config_dir: &PathBuf, action: Option<AuthCmd>) -> Result<()> {
 
 async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
     use grid::genesis::{
-        export_pubkey_hex, generate_protected, load_authority, load_protected, run_genesis_server,
-        store::fetch_truth, GenesisStore,
+        export_operational_key, export_pubkey_hex, generate_protected, load_authority,
+        load_protected, run_genesis_server, store::fetch_truth, GenesisStore,
     };
 
     match action {
@@ -1444,13 +1469,17 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             replica.save(config_dir)?;
             println!("✓ signed block genesis created: {}", replica.chain_id);
         }
-        GenesisCmd::Serve { bind } => {
+        GenesisCmd::Serve { bind, operational } => {
             banner::print_banner();
             println!();
-            let dek =
-                grid::passkey::require_identity(config_dir, "serve protected genesis authority")
-                    .await?;
-            let keys = load_protected(config_dir, &dek)?;
+            let keys = if operational {
+                grid::genesis::load_keypair(config_dir)?
+            } else {
+                let dek =
+                    grid::passkey::require_identity(config_dir, "serve protected genesis authority")
+                        .await?;
+                load_protected(config_dir, &dek)?
+            };
             run_genesis_server(config_dir.clone(), &bind, keys).await?;
         }
         GenesisCmd::Track {
@@ -1519,6 +1548,14 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
         }
         GenesisCmd::Pubkey => {
             println!("{}", export_pubkey_hex(config_dir)?);
+        }
+        GenesisCmd::ExportLeader { output } => {
+            let dek =
+                grid::passkey::require_identity(config_dir, "export Genesis operational leader")
+                    .await?;
+            export_operational_key(config_dir, &dek, &output)?;
+            println!("✓ operational leader exported to {}", output.display());
+            println!("  recovery keys remain encrypted on this Mac");
         }
         GenesisCmd::Truth { url, pubkey } => {
             let t = fetch_truth(&url, pubkey.as_deref()).await?;

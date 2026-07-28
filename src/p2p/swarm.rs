@@ -506,6 +506,12 @@ async fn handle_connection(
                         let Some(genesis) = blocks.iter().find(|b| b.height == 0).cloned() else {
                             continue;
                         };
+                        if let Some(expected) = opts.genesis_pubkey.as_deref() {
+                            if genesis.leader_pubkey != expected {
+                                warn!("rejected block genesis with an untrusted leader key");
+                                continue;
+                            }
+                        }
                         let r = crate::blockchain::ChainReplica {
                             chain_id: genesis.chain_id.clone(),
                             leader_pubkey: genesis.leader_pubkey.clone(),

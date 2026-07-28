@@ -12,6 +12,8 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
+use crate::blockchain::{block_hash, ChainReplica};
+
 use super::keys::GenesisKeys;
 use super::store::GenesisStore;
 use super::truth::TrackedPeer;
@@ -41,6 +43,7 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
         .route("/health", get(health))
         .route("/v1/pubkey", get(pubkey_handler))
         .route("/v1/truth", get(truth_handler))
+        .route("/v1/chain", get(chain_handler))
         // Announce is a *request to be noticed* — does NOT auto-track or ban.
         // Genesis operator still must `grid genesis track` locally.
         .route("/v1/announce", post(announce_handler))
@@ -67,6 +70,19 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
 
 async fn health(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = open_store(&app)?;
+    let replica = ChainReplica::load(&app.config_dir)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let chain = replica.as_ref().map(|chain| {
+        let tip = chain.tip();
+        serde_json::json!({
+            "id": chain.chain_id,
+            "height": tip.height,
+            "tipHash": block_hash(tip).unwrap_or_default(),
+            "leaderPubkey": chain.leader_pubkey,
+            "maxSupply": chain.max_supply,
+            "blocks": chain.blocks.len(),
+        })
+    });
     Ok(Json(serde_json::json!({
         "ok": true,
         "role": "genesis",
@@ -76,6 +92,41 @@ async fn health(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, 
         "banned": s.list_banned().len(),
         "tsl": "bitcoin",
         "authority": ["track_peers", "ban_peers"],
+        "chain": chain,
+    })))
+}
+
+async fn chain_handler(
+    State(app): State<Arc<App>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let chain = ChainReplica::load(&app.config_dir)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let blocks = chain
+        .blocks
+        .iter()
+        .rev()
+        .take(25)
+        .map(|block| {
+            serde_json::json!({
+                "height": block.height,
+                "hash": block_hash(block).unwrap_or_default(),
+                "previousHash": block.previous_hash,
+                "timestamp": block.timestamp,
+                "stateRoot": block.state_root,
+                "transactions": block.transactions.len(),
+                "settlements": block.settlements.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({
+        "chainId": chain.chain_id,
+        "leaderPubkey": chain.leader_pubkey,
+        "maxSupply": chain.max_supply,
+        "height": chain.tip().height,
+        "tipHash": block_hash(chain.tip()).unwrap_or_default(),
+        "recoveryKeys": chain.recovery_pubkeys.len(),
+        "blocks": blocks,
     })))
 }
 

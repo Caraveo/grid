@@ -29,6 +29,17 @@ export type WalletSnapshot = {
     error: string | null;
   };
   bitcoin: { network: string; role: string; route: string; live: boolean };
+  network: {
+    mode: string;
+    truthUrl: string;
+    p2pPeer: string;
+    connected: boolean;
+    trusted: boolean;
+    chainId: string | null;
+    height: number | null;
+    leaderPubkey: string | null;
+    error: string | null;
+  };
   activity: Array<{
     id: string;
     kind: string;

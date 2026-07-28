@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { QRCodeSVG } from "qrcode.react";
 import type { ActionResponse, Page, Theme, WalletSnapshot } from "./types";
 
 const pages: Array<{ id: Page; label: string; icon: string }> = [
@@ -62,7 +63,7 @@ export function App() {
   return (
     <div className="app">
       <aside>
-        <div className="brand"><span className="mark">▦</span><div><b>GRID</b><small>WALLET</small></div></div>
+        <div className="brand"><span className="mark">▦</span><div><b>EMBER</b><small>GRID WALLET</small></div></div>
         <nav>{pages.map((item) => (
           <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}>
             <span>{item.icon}</span>{item.label}
@@ -162,10 +163,30 @@ function Send({ data, act }: { data?: WalletSnapshot; act: Action }) {
 }
 
 function Receive({ data }: { data?: WalletSnapshot }) {
-  const address = data?.grid.address;
-  return <section><Heading label="GRID CHAIN" title="Receive" body="Share your grid0 address—never your recovery phrase." />
-    <div className="receive"><div className="qr">▦</div><code>{address || "Initialize your wallet first"}</code>
-      {address && <button onClick={() => navigator.clipboard.writeText(address)}>Copy address</button>}</div></section>;
+  const [rail, setRail] = useState<"grid" | "solana">("grid");
+  const address = rail === "grid" ? data?.grid.address : data?.solana.address;
+  const label = rail === "grid" ? "GRID chain address" : `Solana ${data?.solana.network || "devnet"} reward address`;
+  const missing = rail === "grid"
+    ? "Initialize your GRID wallet first"
+    : "Create or import a Solana reward wallet in Security";
+
+  return <section><Heading label="RECEIVE" title="Receive funds" body="Choose the correct network, then share only this public address." />
+    <div className="receive">
+      <div className="segments receive-tabs" role="group" aria-label="Receive network">
+        <button className={rail === "grid" ? "active" : ""} onClick={() => setRail("grid")}>GRID</button>
+        <button className={rail === "solana" ? "active" : ""} onClick={() => setRail("solana")}>Solana rewards</button>
+      </div>
+      <small>{label}</small>
+      {address ? <>
+        <div className="qr" aria-label={`QR code for ${label}`}>
+          <QRCodeSVG value={address} size={220} level="M" marginSize={3} />
+        </div>
+        <code>{address}</code>
+        <button onClick={() => navigator.clipboard.writeText(address)}>Copy address</button>
+        <p>Scan or copy this address. Confirm the network before sending.</p>
+      </> : <p className="empty-address">{missing}</p>}
+    </div>
+  </section>;
 }
 
 function Activity({ data }: { data?: WalletSnapshot }) {
@@ -177,9 +198,32 @@ function Activity({ data }: { data?: WalletSnapshot }) {
 
 function Security({ data, act, theme, setTheme }: { data?: WalletSnapshot; act: Action; theme: Theme; setTheme: (theme: Theme) => void }) {
   const [password, setPassword] = useState(""); const [keyphrase, setKeyphrase] = useState(""); const [address, setAddress] = useState("");
+  const [networkMode, setNetworkMode] = useState("genesis");
+  const [truthUrl, setTruthUrl] = useState("");
+  const [p2pPeer, setP2pPeer] = useState("");
+  useEffect(() => {
+    if (!data?.network) return;
+    setNetworkMode(data.network.mode);
+    setTruthUrl(data.network.truthUrl);
+    setP2pPeer(data.network.p2pPeer);
+  }, [data?.network]);
   return <section><Heading label="CUSTODY" title="Security & settlement" body="Vault protection, appearance, and Solana reward routing." />
     <div className="settings"><article><h3>Appearance</h3><div className="segments">{(["system", "light", "dark"] as Theme[]).map((value) =>
       <button className={theme === value ? "active" : ""} key={value} onClick={() => setTheme(value)}>{value}</button>)}</div></article>
+      <article><h3>GRID network</h3>
+        <p><i className={data?.network.connected && data.network.trusted ? "ok" : ""} /> {data?.network.connected && data.network.trusted ? `Connected · block ${data.network.height ?? 0}` : data?.network.error || "Connecting to Genesis…"}</p>
+        <select value={networkMode} onChange={(event) => setNetworkMode(event.target.value)}>
+          <option value="genesis">GRID Genesis (recommended)</option>
+          <option value="local">Local node</option>
+          <option value="custom">Custom node</option>
+        </select>
+        {networkMode === "custom" ? <>
+          <input value={truthUrl} onChange={(event) => setTruthUrl(event.target.value)} placeholder="http://host:9100" />
+          <input value={p2pPeer} onChange={(event) => setP2pPeer(event.target.value)} placeholder="host:9900" />
+        </> : null}
+        <button onClick={() => void act({ action: "setNetwork", mode: networkMode, truthUrl, p2pPeer })}>Save network</button>
+        <p className="font-mono">{data?.network.truthUrl || "http://genesis.grid-compute.com:9100"}<br />{data?.network.p2pPeer || "genesis.grid-compute.com:9900"}</p>
+      </article>
       <article><h3>GRID vault</h3><p>{data?.auth.detail}</p>{!data?.auth.initialized ? <Setup act={act} /> : !data.auth.unlocked && <>
         {(data.auth.mode === "password" || data.auth.mode === "combo") && <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />}
         {(data.auth.mode === "keyphrase" || data.auth.mode === "combo") && <textarea placeholder="24-word recovery phrase" value={keyphrase} onChange={(e) => setKeyphrase(e.target.value)} />}

@@ -7,6 +7,7 @@ struct WalletSnapshot: Codable {
     let grid: GridSnapshot
     let solana: SolanaSnapshot
     let bitcoin: BitcoinSnapshot
+    let network: NetworkSnapshot
     let activity: [ChainTransaction]
 }
 
@@ -45,6 +46,18 @@ struct BitcoinSnapshot: Codable {
     let role: String
     let route: String
     let live: Bool
+}
+
+struct NetworkSnapshot: Codable {
+    let mode: String
+    let truthUrl: String
+    let p2pPeer: String
+    let connected: Bool
+    let trusted: Bool
+    let chainId: String?
+    let height: Int?
+    let leaderPubkey: String?
+    let error: String?
 }
 
 struct ChainTransaction: Codable, Identifiable {

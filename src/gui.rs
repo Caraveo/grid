@@ -3,7 +3,8 @@
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::chain::{ChainState, ChainTx, BURN_DEADLINE_DAYS};
 use crate::config::NodeConfig;
@@ -22,6 +23,7 @@ pub struct WalletSnapshot {
     pub grid: GridSnapshot,
     pub solana: SolanaSnapshot,
     pub bitcoin: BitcoinSnapshot,
+    pub network: NetworkSnapshot,
     pub activity: Vec<ChainTx>,
 }
 
@@ -70,6 +72,66 @@ pub struct BitcoinSnapshot {
     pub live: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkSnapshot {
+    pub mode: String,
+    pub truth_url: String,
+    pub p2p_peer: String,
+    pub connected: bool,
+    pub trusted: bool,
+    pub chain_id: Option<String>,
+    pub height: Option<u64>,
+    pub leader_pubkey: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WalletNetworkSettings {
+    mode: String,
+    truth_url: String,
+    p2p_peer: String,
+}
+
+impl Default for WalletNetworkSettings {
+    fn default() -> Self {
+        Self {
+            mode: "genesis".into(),
+            truth_url: crate::genesis::CANONICAL_TRUTH_URL.into(),
+            p2p_peer: crate::genesis::CANONICAL_P2P_PEER.into(),
+        }
+    }
+}
+
+impl WalletNetworkSettings {
+    fn path_in(config_dir: &Path) -> PathBuf {
+        config_dir.join("wallet-network.json")
+    }
+
+    fn load(config_dir: &Path) -> Self {
+        std::fs::read_to_string(Self::path_in(config_dir))
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self, config_dir: &Path) -> Result<()> {
+        validate_network_endpoint(&self.truth_url, &self.p2p_peer)?;
+        std::fs::create_dir_all(config_dir)?;
+        let path = Self::path_in(config_dir);
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, serde_json::to_vec_pretty(self)?)?;
+        std::fs::rename(temp, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "camelCase")]
 pub enum WalletAction {
@@ -97,6 +159,11 @@ pub enum WalletAction {
     CreateSolana,
     ImportSolana {
         address: String,
+    },
+    SetNetwork {
+        mode: String,
+        truth_url: Option<String>,
+        p2p_peer: Option<String>,
     },
 }
 
@@ -166,6 +233,7 @@ pub async fn snapshot(config_dir: &Path) -> WalletSnapshot {
     let mut activity = chain.txs.clone();
     activity.reverse();
     activity.truncate(100);
+    let network = network_snapshot(config_dir).await;
     WalletSnapshot {
         version: 1,
         config_dir: config_dir.display().to_string(),
@@ -194,6 +262,7 @@ pub async fn snapshot(config_dir: &Path) -> WalletSnapshot {
             route: "GRID → SOL → BTC".into(),
             live: false,
         },
+        network,
         activity,
     }
 }
@@ -251,6 +320,28 @@ pub async fn act(config_dir: &Path, action: WalletAction) -> Result<ActionResult
             let address = crate::solana_wallet::import_address(config_dir, &address)?;
             format!("Solana reward address configured: {address}")
         }
+        WalletAction::SetNetwork {
+            mode,
+            truth_url,
+            p2p_peer,
+        } => {
+            let settings = match mode.as_str() {
+                "genesis" => WalletNetworkSettings::default(),
+                "local" => WalletNetworkSettings {
+                    mode,
+                    truth_url: "http://127.0.0.1:9100".into(),
+                    p2p_peer: "127.0.0.1:9900".into(),
+                },
+                "custom" => WalletNetworkSettings {
+                    mode,
+                    truth_url: truth_url.unwrap_or_default(),
+                    p2p_peer: p2p_peer.unwrap_or_default(),
+                },
+                _ => bail!("network mode must be genesis, local, or custom"),
+            };
+            settings.save(config_dir)?;
+            format!("Wallet network set to {}", settings.mode)
+        }
     };
     Ok(ActionResult {
         ok: true,
@@ -259,6 +350,96 @@ pub async fn act(config_dir: &Path, action: WalletAction) -> Result<ActionResult
         transaction,
         snapshot: snapshot(config_dir).await,
     })
+}
+
+async fn network_snapshot(config_dir: &Path) -> NetworkSnapshot {
+    let settings = WalletNetworkSettings::load(config_dir);
+    let mut snapshot = NetworkSnapshot {
+        mode: settings.mode.clone(),
+        truth_url: settings.truth_url.clone(),
+        p2p_peer: settings.p2p_peer.clone(),
+        connected: false,
+        trusted: false,
+        chain_id: None,
+        height: None,
+        leader_pubkey: None,
+        error: None,
+    };
+    if let Err(error) = validate_network_endpoint(&settings.truth_url, &settings.p2p_peer) {
+        snapshot.error = Some(error.to_string());
+        return snapshot;
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            snapshot.error = Some(error.to_string());
+            return snapshot;
+        }
+    };
+    let response = match client
+        .get(format!("{}/health", settings.truth_url.trim_end_matches('/')))
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            snapshot.error = Some(format!("Genesis health returned {}", response.status()));
+            return snapshot;
+        }
+        Err(error) => {
+            snapshot.error = Some(format!("Genesis unavailable: {error}"));
+            return snapshot;
+        }
+    };
+    let body: serde_json::Value = match response.json().await {
+        Ok(body) => body,
+        Err(error) => {
+            snapshot.error = Some(format!("Invalid Genesis response: {error}"));
+            return snapshot;
+        }
+    };
+    snapshot.connected = body.get("ok").and_then(|value| value.as_bool()) == Some(true);
+    snapshot.chain_id = body
+        .pointer("/chain/id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    snapshot.height = body
+        .pointer("/chain/height")
+        .and_then(|value| value.as_u64());
+    snapshot.leader_pubkey = body
+        .pointer("/chain/leaderPubkey")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    snapshot.trusted = if settings.mode == "genesis" {
+        snapshot.leader_pubkey.as_deref() == Some(crate::genesis::CANONICAL_LEADER_PUBKEY)
+    } else {
+        snapshot.connected
+    };
+    if snapshot.connected && !snapshot.trusted {
+        snapshot.error = Some("Genesis responded, but its leader key does not match the pinned GRID authority".into());
+    }
+    snapshot
+}
+
+fn validate_network_endpoint(truth_url: &str, p2p_peer: &str) -> Result<()> {
+    let url = reqwest::Url::parse(truth_url)?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        bail!("Genesis truth endpoint must be an http(s) URL without credentials");
+    }
+    let (host, port) = p2p_peer
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow::anyhow!("P2P peer must be host:port"))?;
+    if host.trim().is_empty() || port.parse::<u16>().is_err() {
+        bail!("P2P peer must be host:port");
+    }
+    Ok(())
 }
 
 fn ensure_unlocked(config_dir: &Path) -> Result<()> {

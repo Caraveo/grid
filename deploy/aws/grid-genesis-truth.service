@@ -1,0 +1,20 @@
+[Unit]
+Description=GRID signed Genesis truth service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+ExecStart=/opt/grid/bin/grid --config-dir /var/lib/grid genesis serve --bind 0.0.0.0:9100 --operational
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/grid
+
+[Install]
+WantedBy=multi-user.target

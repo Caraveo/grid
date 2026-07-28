@@ -1,0 +1,20 @@
+[Unit]
+Description=GRID canonical Genesis P2P peer
+After=network-online.target grid-genesis-truth.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+ExecStart=/opt/grid/bin/grid --config-dir /var/lib/grid peer --listen 0.0.0.0:9900 --no-genesis --id genesis --name Genesis --class S
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/grid
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 @main
 struct GRIDWalletApp: App {
@@ -121,8 +123,8 @@ struct Brand: View {
             }
             .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 1) {
-                Text("GRID").font(.headline).tracking(3)
-                Text("WALLET").font(.caption2).foregroundStyle(.secondary).tracking(2)
+                Text("EMBER").font(.headline).tracking(3)
+                Text("GRID WALLET").font(.caption2).foregroundStyle(.secondary).tracking(2)
             }
             Spacer()
         }
@@ -359,23 +361,96 @@ struct SendView: View {
 
 struct ReceiveView: View {
     @ObservedObject var model: WalletModel
+    @State private var rail = ReceiveRail.grid
+
+    private var address: String? {
+        switch rail {
+        case .grid: model.snapshot?.grid.address
+        case .solana: model.snapshot?.solana.address
+        }
+    }
+
+    private var addressLabel: String {
+        switch rail {
+        case .grid: "GRID chain address"
+        case .solana: "Solana \(model.snapshot?.solana.network ?? "devnet") reward address"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            PageTitle(eyebrow: "GRID chain", title: "Receive", subtitle: "Share your public grid0 address—never your recovery phrase.")
-            if let address = model.snapshot?.grid.address {
+            PageTitle(eyebrow: "Receive", title: "Receive funds", subtitle: "Choose the correct network, then share only this public address.")
+            Picker("Network", selection: $rail) {
+                ForEach(ReceiveRail.allCases) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
+
+            if let address {
                 VStack(spacing: 18) {
-                    Image(systemName: "qrcode").font(.system(size: 100, weight: .ultraLight))
+                    Text(addressLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    QRCodeView(value: address)
+                        .frame(width: 244, height: 244)
                     Text(address).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                     Button("Copy address") { NSPasteboard.general.setString(address, forType: .string) }
+                    Text("Scan or copy this address. Confirm the network before sending.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(40)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
             } else {
-                Text("Initialize your GRID wallet from Overview first.").foregroundStyle(.secondary)
+                Text(
+                    rail == .grid
+                        ? "Initialize your GRID wallet from Overview first."
+                        : "Create or import a Solana reward wallet from Security first."
+                )
+                .foregroundStyle(.secondary)
             }
             Spacer()
         }
+    }
+}
+
+private enum ReceiveRail: String, CaseIterable, Identifiable {
+    case grid = "GRID"
+    case solana = "Solana rewards"
+    var id: String { rawValue }
+}
+
+private struct QRCodeView: View {
+    let value: String
+
+    private var image: NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: 244, height: 244))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .interpolation(.none)
+                    .resizable()
+            } else {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+            }
+        }
+        .padding(12)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityLabel("QR code for public receive address")
     }
 }
 
@@ -400,6 +475,9 @@ struct SecurityView: View {
     @State private var password = ""
     @State private var phrase = ""
     @State private var solanaAddress = ""
+    @State private var networkMode = "genesis"
+    @State private var truthUrl = ""
+    @State private var p2pPeer = ""
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -409,6 +487,43 @@ struct SecurityView: View {
                         ForEach(AppTheme.allCases) { Text($0.rawValue).tag($0.rawValue) }
                     }
                     .pickerStyle(.segmented)
+                    .padding(.vertical, 8)
+                }
+                GroupBox("GRID network") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Circle()
+                                .fill(model.snapshot?.network.connected == true && model.snapshot?.network.trusted == true ? .green : .orange)
+                                .frame(width: 8, height: 8)
+                            Text(networkStatus)
+                        }
+                        Picker("Node", selection: $networkMode) {
+                            Text("GRID Genesis").tag("genesis")
+                            Text("Local node").tag("local")
+                            Text("Custom node").tag("custom")
+                        }
+                        .pickerStyle(.segmented)
+                        if networkMode == "custom" {
+                            TextField("Truth URL (http://host:9100)", text: $truthUrl)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("P2P peer (host:9900)", text: $p2pPeer)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Button("Save network") {
+                            model.act([
+                                "action": "setNetwork",
+                                "mode": networkMode,
+                                "truthUrl": truthUrl,
+                                "p2pPeer": p2pPeer,
+                            ])
+                        }
+                        Text(model.snapshot?.network.truthUrl ?? "http://genesis.grid-compute.com:9100")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text(model.snapshot?.network.p2pPeer ?? "genesis.grid-compute.com:9900")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
                     .padding(.vertical, 8)
                 }
                 GroupBox("GRID vault") {
@@ -467,7 +582,24 @@ struct SecurityView: View {
                     .padding(.vertical, 8)
                 }
             }
+            .onAppear { loadNetworkSettings() }
+            .onChange(of: model.snapshot?.network.mode) { _ in loadNetworkSettings() }
         }
+    }
+
+    private var networkStatus: String {
+        guard let network = model.snapshot?.network else { return "Connecting to Genesis…" }
+        if network.connected && network.trusted {
+            return "Connected · block \(network.height ?? 0)"
+        }
+        return network.error ?? "Genesis unavailable"
+    }
+
+    private func loadNetworkSettings() {
+        guard let network = model.snapshot?.network else { return }
+        networkMode = network.mode
+        truthUrl = network.truthUrl
+        p2pPeer = network.p2pPeer
     }
 }
 
