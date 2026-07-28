@@ -23,7 +23,6 @@ struct SettlementList {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct PendingSettlement {
     job_id: String,
     node_id: String,
@@ -55,14 +54,26 @@ pub struct ProducerOptions {
 impl PendingSettlement {
     fn into_chain_settlement(self) -> Result<Settlement> {
         if self.job_id.is_empty()
-            || self.node_id.is_empty()
-            || self.cluster_id.is_empty()
             || self.recipient.is_empty()
             || self.amount <= 0.0
             || !self.amount.is_finite()
         {
             bail!("coordinator returned an invalid settlement");
         }
+        // Pilot rewards created before node/cluster receipt binding have empty
+        // identity fields. Preserve them deterministically using the reward
+        // wallet so every historical settlement remains independently
+        // replayable without inventing a mutable identity.
+        let node_id = if self.node_id.trim().is_empty() {
+            format!("legacy:{}", self.recipient)
+        } else {
+            self.node_id
+        };
+        let cluster_id = if self.cluster_id.trim().is_empty() {
+            "legacy-pilot".to_string()
+        } else {
+            self.cluster_id
+        };
         let settlement = Settlement {
             job_id: self.job_id,
             track: "mine".into(),
@@ -71,8 +82,8 @@ impl PendingSettlement {
             verified: true,
             pool: self.amount,
             nodes: vec![SettlementNode {
-                node_id: self.node_id.clone(),
-                cluster_id: self.cluster_id,
+                node_id: node_id.clone(),
+                cluster_id,
                 score: 1.0,
                 // The current devnet queue emits one independently verified
                 // miner per settlement; it therefore receives both the
@@ -80,7 +91,7 @@ impl PendingSettlement {
                 class_s: true,
             }],
             allocations: vec![SettlementAllocation {
-                node_id: self.node_id,
+                node_id,
                 amount: self.amount,
             }],
         };
@@ -314,6 +325,24 @@ mod tests {
         };
         let settlement = row.into_chain_settlement().unwrap();
         assert_eq!(settlement.allocations[0].amount, 100.0);
+        settlement.verify().unwrap();
+    }
+
+    #[test]
+    fn legacy_receipt_uses_stable_reward_wallet_identity() {
+        let commitment = "b".repeat(64);
+        let row = PendingSettlement {
+            job_id: "job-legacy".into(),
+            node_id: String::new(),
+            cluster_id: String::new(),
+            recipient: "reward-wallet".into(),
+            amount: 100.0,
+            intent_commitment: commitment.clone(),
+            result_commitment: commitment,
+        };
+        let settlement = row.into_chain_settlement().unwrap();
+        assert_eq!(settlement.nodes[0].node_id, "legacy:reward-wallet");
+        assert_eq!(settlement.nodes[0].cluster_id, "legacy-pilot");
         settlement.verify().unwrap();
     }
 }
