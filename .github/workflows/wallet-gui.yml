@@ -1,6 +1,9 @@
 name: Release GRID Wallet
 
 on:
+  push:
+    tags:
+      - "wallet-v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -11,6 +14,9 @@ on:
 
 permissions:
   contents: write
+
+env:
+  WALLET_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   macos:
@@ -127,7 +133,7 @@ jobs:
       - name: Publish wallet release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ env.WALLET_TAG }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: true
