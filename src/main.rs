@@ -249,6 +249,13 @@ enum Commands {
         action: Option<SolanaCmd>,
     },
 
+    /// Local JSON bridge for the official native GRID Wallet applications
+    #[command(hide = true)]
+    Gui {
+        #[command(subcommand)]
+        action: GuiCmd,
+    },
+
     /// Public mesh registry (default: https://grid-compute.com)
     Registry {
         /// Override registry base URL
@@ -462,6 +469,14 @@ enum SolanaCmd {
     },
     /// Show configured address and live devnet GRID balance
     Status,
+}
+
+#[derive(Subcommand)]
+enum GuiCmd {
+    /// Print the non-secret wallet state as JSON
+    Snapshot,
+    /// Read one secret-bearing action as JSON from stdin
+    Action,
 }
 
 #[derive(Subcommand)]
@@ -982,6 +997,20 @@ async fn main() -> Result<()> {
                 SolanaCmd::Status => grid::solana_wallet::status(&config_dir).await?,
             }
         }
+
+        Commands::Gui { action } => match action {
+            GuiCmd::Snapshot => {
+                let snapshot = grid::gui::snapshot(&config_dir).await;
+                println!("{}", serde_json::to_string(&snapshot)?);
+            }
+            GuiCmd::Action => {
+                let mut raw = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw)?;
+                let action: grid::gui::WalletAction = serde_json::from_str(&raw)?;
+                let result = grid::gui::act(&config_dir, action).await?;
+                println!("{}", serde_json::to_string(&result)?);
+            }
+        },
 
         Commands::Claim {
             realm,

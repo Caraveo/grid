@@ -1,0 +1,134 @@
+name: Release GRID Wallet
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Wallet release tag"
+        required: true
+        default: "wallet-v0.1.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            rust_target: x86_64-apple-darwin
+            swift_arch: x86_64
+            asset: GRID-Wallet-macOS-x86_64.zip
+          - os: macos-14
+            rust_target: aarch64-apple-darwin
+            swift_arch: arm64
+            asset: GRID-Wallet-macOS-aarch64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - name: Build GRID wallet bridge
+        run: cargo build --release --locked --target "${{ matrix.rust_target }}"
+      - name: Build native SwiftUI wallet
+        working-directory: wallet-apps/macos
+        run: swift build -c release --arch "${{ matrix.swift_arch }}"
+      - name: Package native app
+        run: |
+          app="dist/GRID Wallet.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp "wallet-apps/macos/.build/${{ matrix.swift_arch }}-apple-macosx/release/GRIDWallet" "$app/Contents/MacOS/GRIDWallet"
+          cp "target/${{ matrix.rust_target }}/release/grid" "$app/Contents/Resources/grid"
+          cp wallet-apps/macos/Info.plist "$app/Contents/Info.plist"
+          chmod 755 "$app/Contents/MacOS/GRIDWallet" "$app/Contents/Resources/grid"
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  desktop:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            asset: grid-wallet-linux
+          - os: windows-2022
+            asset: grid-wallet-windows
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: wallet-apps/desktop/package-lock.json
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install Windows crypto dependency
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install strawberryperl --no-progress --yes
+      - name: Install frontend
+        working-directory: wallet-apps/desktop
+        run: npm ci
+      - name: Build Tauri wallet
+        working-directory: wallet-apps/desktop
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            export PATH="/c/Strawberry/perl/bin:$PATH"
+            export PERL="/c/Strawberry/perl/bin/perl.exe"
+          fi
+          npm run tauri:build
+      - name: Collect packages
+        run: |
+          mkdir -p dist
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            find wallet-apps/desktop/src-tauri/target/release/bundle -type f -name '*.exe' -exec cp {} dist/GRID-Wallet-Windows-x86_64-setup.exe \;
+            find wallet-apps/desktop/src-tauri/target/release/bundle -type f -name '*.msi' -exec cp {} dist/GRID-Wallet-Windows-x86_64.msi \;
+          else
+            find wallet-apps/desktop/src-tauri/target/release/bundle -type f -name '*.AppImage' -exec cp {} dist/GRID-Wallet-Linux-x86_64.AppImage \;
+            find wallet-apps/desktop/src-tauri/target/release/bundle -type f -name '*.deb' -exec cp {} dist/GRID-Wallet-Linux-x86_64.deb \;
+          fi
+          ls -lh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [macos, desktop]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create checksum manifest
+        working-directory: release-assets
+        run: sha256sum GRID-Wallet-* > SHA256SUMS
+      - name: Publish wallet release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          generate_release_notes: true
+          files: release-assets/*

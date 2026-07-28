@@ -23,6 +23,7 @@ pub mod wallet;
 pub use executor::DEFAULT_BLAKE3_ITERS;
 pub mod genesis;
 pub mod gp;
+pub mod gui;
 pub mod mesh_ping;
 pub mod node;
 pub mod p2p;

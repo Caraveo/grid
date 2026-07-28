@@ -21,7 +21,8 @@ mod vault;
 
 pub use ceremony::{register_passkey, require_passkey};
 pub use vault::{
-    auth_delete, auth_init, auth_login, auth_status, decrypt_with_vault, encrypt_with_vault,
+    auth_delete, auth_init, auth_init_combo_gui, auth_init_keyphrase_gui, auth_init_password_gui,
+    auth_login, auth_status, auth_unlock_gui, decrypt_with_vault, encrypt_with_vault,
     load_operator_signing_key, normalize_peer_target, operator_pubkey_hex, p2p_noise_static_key,
     require_identity, require_unlocked, sign_operator, verify_operator_sig, AuthMode, AuthStatus,
 };

@@ -416,6 +416,81 @@ fn gen_24_words() -> Result<String> {
     Ok(mnemonic.to_string())
 }
 
+/// GUI-safe keyphrase setup. The phrase is returned once to the trusted local
+/// caller instead of being written to stdout or persisted.
+pub fn auth_init_keyphrase_gui(c: &Path) -> Result<String> {
+    if vault_exists(c) {
+        bail!("vault already exists");
+    }
+    fs::create_dir_all(keys_dir(c))?;
+    let phrase = gen_24_words()?;
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    let k = kdf(&phrase, &salt, "GRID vault keyphrase v1");
+    finish_single_factor(c, "keyphrase", &k, &salt, "AES-256-GCM+keyphrase-kdf")?;
+    Ok(phrase)
+}
+
+/// GUI-safe password setup. Secrets arrive over the bridge's stdin and never
+/// appear in process arguments.
+pub fn auth_init_password_gui(c: &Path, password: &str) -> Result<()> {
+    if vault_exists(c) {
+        bail!("vault already exists");
+    }
+    if password.is_empty() {
+        bail!("password is required");
+    }
+    fs::create_dir_all(keys_dir(c))?;
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    let k = kdf(password, &salt, "GRID vault password v1");
+    finish_single_factor(c, "password", &k, &salt, "AES-256-GCM+password-kdf")
+}
+
+/// GUI-safe combo setup using the same password + passkey + 24-word wrapping
+/// scheme as the interactive CLI.
+pub async fn auth_init_combo_gui(c: &Path, password: &str) -> Result<String> {
+    if vault_exists(c) {
+        bail!("vault already exists");
+    }
+    if password.is_empty() {
+        bail!("password is required");
+    }
+    fs::create_dir_all(keys_dir(c))?;
+    ceremony::register_passkey(c).await?;
+    let phrase = gen_24_words()?;
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    let k1 = kdf(password, &salt, "GRID vault password v1");
+    let k2 = kdf(&phrase, &salt, "GRID vault keyphrase v1");
+    let wrap = xor32(&k1, &k2);
+    let mut dek = [0u8; 32];
+    OsRng.fill_bytes(&mut dek);
+    let (secret, pub_hex) = gen_operator_secret();
+    write_secret(&p_wrap(c), &aes_encrypt(&wrap, &dek)?)?;
+    write_secret(&p_enc(c), &aes_encrypt(&dek, &secret)?)?;
+    write_secret(&p_pub(c), pub_hex.as_bytes())?;
+    save_meta(
+        c,
+        VaultMeta {
+            mode: "combo".into(),
+            encrypted: true,
+            algorithm: "AES-256-GCM+combo".into(),
+            created_at: Utc::now().to_rfc3339(),
+            public_key_hex: pub_hex,
+            kdf_salt_hex: Some(hex::encode(salt)),
+            master_destroyed: false,
+            factors: Some(vec![
+                "password".into(),
+                "passkey".into(),
+                "keyphrase".into(),
+            ]),
+        },
+    )?;
+    write_session(c, &dek)?;
+    Ok(phrase)
+}
+
 async fn init_combo(c: &Path) -> Result<()> {
     println!("Mode: combo (password → passkey → keyphrase)\n");
     let pw = read_confirm("Password (1/3)")?;
@@ -554,6 +629,65 @@ pub async fn auth_login(config_dir: &Path) -> Result<()> {
         SESSION_MAX_SECS / 3600
     );
     Ok(())
+}
+
+/// Unlock an existing GUI wallet without terminal prompts. Passwords and
+/// phrases are accepted only in memory by the local bridge.
+pub async fn auth_unlock_gui(
+    c: &Path,
+    password: Option<&str>,
+    keyphrase: Option<&str>,
+) -> Result<()> {
+    if !vault_exists(c) {
+        bail!("no vault");
+    }
+    let meta = load_meta(c)?;
+    let mode = AuthMode::parse(&meta.mode)?;
+    let dek = match mode {
+        AuthMode::Passkey => {
+            ceremony::require_passkey(c, "Unlock GRID Wallet").await?;
+            unwrap_passkey_seal(c)?
+        }
+        AuthMode::Password => unwrap_kdf(
+            c,
+            &meta,
+            password.context("password is required")?,
+            "GRID vault password v1",
+        )?,
+        AuthMode::Keyphrase => unwrap_kdf(
+            c,
+            &meta,
+            keyphrase.context("24-word phrase is required")?,
+            "GRID vault keyphrase v1",
+        )?,
+        AuthMode::Combo => {
+            ceremony::require_passkey(c, "Unlock GRID Wallet (passkey factor)").await?;
+            let salt = salt(&meta)?;
+            let wrap = xor32(
+                &kdf(
+                    password.context("password is required")?,
+                    &salt,
+                    "GRID vault password v1",
+                ),
+                &kdf(
+                    keyphrase.context("24-word phrase is required")?,
+                    &salt,
+                    "GRID vault keyphrase v1",
+                ),
+            );
+            let value = aes_decrypt(&wrap, &fs::read(p_wrap(c))?)?;
+            value
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid wrapped key"))?
+        }
+        AuthMode::Nocrypt => return Ok(()),
+        AuthMode::Master => bail!("legacy master vault must be unlocked with the GRID CLI"),
+    };
+    // Verify the factor before establishing an eight-hour local session.
+    let encrypted = fs::read(p_enc(c))?;
+    let _ = aes_decrypt(&dek, &encrypted).context("unlock failed")?;
+    write_session(c, &dek)
 }
 
 async fn unlock_master(c: &Path, meta: &VaultMeta) -> Result<[u8; 32]> {

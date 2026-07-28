@@ -1,5 +1,7 @@
 /target/
 /target-linux-x86_64/
+/dist/
+wallet-apps/macos/.build/
 **/*.rs.bk
 .DS_Store
 .env

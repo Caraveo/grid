@@ -67,14 +67,11 @@ pub fn import_address(config_dir: &Path, address: &str) -> Result<String> {
     Ok(address)
 }
 
-pub async fn status(config_dir: &Path) -> Result<()> {
+pub async fn balance(config_dir: &Path) -> Result<(String, f64, bool)> {
     let config = NodeConfig::load(&NodeConfig::path_in(config_dir))
         .with_context(|| "initialize the node first: grid init --name my-node --class S")?;
     let Some(address) = config.solana_reward_wallet else {
-        println!("Solana reward wallet: not configured");
-        println!("  grid solana create");
-        println!("  grid solana import <ADDRESS>");
-        return Ok(());
+        bail!("Solana reward wallet is not configured");
     };
     validate_address(&address)?;
     let body = serde_json::json!({
@@ -100,7 +97,10 @@ pub async fn status(config_dir: &Path) -> Result<()> {
     if let Some(error) = response.get("error") {
         bail!("Solana RPC error: {error}");
     }
-    let accounts = response["result"]["value"].as_array().cloned().unwrap_or_default();
+    let accounts = response["result"]["value"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let balance = accounts
         .iter()
         .filter_map(|account| {
@@ -109,19 +109,38 @@ pub async fn status(config_dir: &Path) -> Result<()> {
                 .and_then(|value| value.parse::<f64>().ok())
         })
         .sum::<f64>();
+    Ok((
+        address,
+        balance,
+        config_dir.join("keys").join("solana-reward.json").exists(),
+    ))
+}
+
+pub async fn status(config_dir: &Path) -> Result<()> {
+    let (address, balance, local_key) = match balance(config_dir).await {
+        Ok(value) => value,
+        Err(error) if error.to_string().contains("not configured") => {
+            println!("Solana reward wallet: not configured");
+            println!("  grid solana create");
+            println!("  grid solana import <ADDRESS>");
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     println!("Solana reward wallet");
     println!("  address   {address}");
     println!("  network   devnet");
     println!("  GRID      {balance:.6}");
     println!("  mint      {GRID_DEVNET_MINT}");
-    println!(
-        "  explorer  https://explorer.solana.com/address/{address}?cluster=devnet"
-    );
-    let key_path = config_dir.join("keys").join("solana-reward.json");
+    println!("  explorer  https://explorer.solana.com/address/{address}?cluster=devnet");
     println!(
         "  custody   {}",
-        if key_path.exists() {
-            key_path.display().to_string()
+        if local_key {
+            config_dir
+                .join("keys")
+                .join("solana-reward.json")
+                .display()
+                .to_string()
         } else {
             "external / watch-only".to_string()
         }
