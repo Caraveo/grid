@@ -398,6 +398,31 @@ async fn handle_connection(
                     }
                 }
             }
+            Message::TunnelOpen {
+                service: _,
+                capability: _,
+                request_id,
+            } => {
+                // The stream relay is intentionally fail-closed until the Engine
+                // host has an active private-service capability registry. A peer
+                // can never turn this control message into a public port forward.
+                tx.send(Message::TunnelResult {
+                    request_id,
+                    accepted: false,
+                    reason: Some("private Engine tunnel is not active on this peer".into()),
+                })
+                .await
+                .ok();
+            }
+            Message::TunnelResult {
+                request_id,
+                accepted,
+                reason,
+            } => {
+                if !accepted {
+                    debug!("private tunnel {request_id} refused: {}", reason.unwrap_or_else(|| "policy".into()));
+                }
+            }
             Message::Peers { addrs } => {
                 let mut s = state.lock();
                 let mut new = 0usize;

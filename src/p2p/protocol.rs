@@ -63,6 +63,19 @@ pub enum Message {
     Blocks {
         blocks: Vec<crate::blockchain::Block>,
     },
+    /// Request a private Engine service stream. This is deliberately a P2P
+    /// control message, never a public URL or a host-port forwarding request.
+    TunnelOpen {
+        service: String,
+        capability: String,
+        request_id: String,
+    },
+    /// The host either accepts a capability-gated stream or fails closed.
+    TunnelResult {
+        request_id: String,
+        accepted: bool,
+        reason: Option<String>,
+    },
 }
 
 impl Message {
