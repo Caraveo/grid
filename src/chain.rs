@@ -25,6 +25,8 @@ use crate::address::{is_valid_address, normalize_address};
 /// Compute-reward allocation enforced by the pilot reward ledger.
 /// Fixed protocol cap: 5B compute-emission allocation + 5B treasury allocation.
 pub const MAX_SUPPLY: f64 = 10_000_000_000.0;
+/// Lifetime ceiling for verified compute rewards. Treasury GRID is separate.
+pub const COMPUTE_ALLOCATION: f64 = 5_000_000_000.0;
 /// Unclaimed mint older than this is burned by protocol.
 pub const BURN_DEADLINE_DAYS: i64 = 365;
 /// Maximum newly-issued GRID per one-hour protocol epoch until governance
@@ -176,7 +178,9 @@ impl ChainState {
     }
 
     pub fn mint_headroom(&self) -> f64 {
-        (self.max_supply - self.circulating()).max(0.0)
+        let total_headroom = (self.max_supply - self.circulating()).max(0.0);
+        let compute_issued = (self.total_minted - self.total_burned).max(0.0);
+        total_headroom.min((COMPUTE_ALLOCATION - compute_issued).max(0.0))
     }
 
     fn refresh_emission_epoch(&mut self) {
@@ -978,7 +982,7 @@ mod tests {
         let (b, n) = c.apply_protocol_burns();
         assert_eq!(n, 1);
         assert!((b - 100.0).abs() < 1e-9);
-        assert!((c.mint_headroom() - (MAX_SUPPLY - 0.0)).abs() < 1.0); // burned frees
+        assert!((c.mint_headroom() - COMPUTE_ALLOCATION).abs() < 1.0);
         assert!((c.circulating()).abs() < 1e-9);
 
         c.save(dir.path()).unwrap();
@@ -989,7 +993,7 @@ mod tests {
     #[test]
     fn cap_blocks_mint() {
         let mut c = ChainState::default();
-        c.total_minted = MAX_SUPPLY;
+        c.total_minted = COMPUTE_ALLOCATION;
         c.total_burned = 0.0;
         let m = c.mint_unclaimed("n", "j", 50.0, "c");
         assert_eq!(m, 0.0);
