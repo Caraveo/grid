@@ -136,7 +136,7 @@ enum Commands {
         action: ComputeCmd,
     },
 
-    /// Host + mine together (one-box)
+    /// P2P peer + host + mine together (one-box)
     Node {
         #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
@@ -148,9 +148,21 @@ enum Commands {
         gpu: Option<String>,
         #[arg(long)]
         poll_ms: Option<u64>,
+        /// P2P listen address
+        #[arg(long, default_value = "0.0.0.0:9900")]
+        p2p_listen: String,
+        /// Additional P2P peers to dial (repeatable; Genesis is automatic)
+        #[arg(long = "p2p-connect")]
+        p2p_connect: Vec<String>,
+        /// Do not dial the canonical Genesis peer
+        #[arg(long)]
+        p2p_no_genesis: bool,
+        /// Dedicated mode-0600 Noise key for a non-interactive node service
+        #[arg(long)]
+        p2p_noise_key_file: Option<PathBuf>,
     },
 
-    /// Alias for `grid node` (host + mine)
+    /// Alias for `grid node` (P2P peer + host + mine)
     Start {
         #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
@@ -829,12 +841,24 @@ async fn main() -> Result<()> {
             class,
             gpu,
             poll_ms,
+            p2p_listen,
+            p2p_connect,
+            p2p_no_genesis,
+            p2p_noise_key_file,
         } => {
             banner::print_mark();
             println!();
             let cfg = load_cfg(&config_dir, coordinator, id, class, gpu, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
-            run_node(cfg).await?;
+            run_combined_node(
+                cfg,
+                config_dir.clone(),
+                p2p_listen,
+                p2p_connect,
+                p2p_no_genesis,
+                p2p_noise_key_file,
+            )
+            .await?;
         }
 
         Commands::Start { coordinator } => {
@@ -842,7 +866,15 @@ async fn main() -> Result<()> {
             println!();
             let cfg = load_cfg(&config_dir, coordinator, None, None, None, None)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
-            run_node(cfg).await?;
+            run_combined_node(
+                cfg,
+                config_dir.clone(),
+                "0.0.0.0:9900".into(),
+                Vec::new(),
+                false,
+                None,
+            )
+            .await?;
         }
 
         Commands::Submit {
@@ -1711,6 +1743,51 @@ fn load_operator_env(config_dir: &std::path::Path) {
             // SAFETY: single-threaded at startup before workers; sets operator config only.
             unsafe { std::env::set_var(k, v) };
         }
+    }
+}
+
+async fn run_combined_node(
+    cfg: NodeConfig,
+    config_dir: PathBuf,
+    listen: String,
+    mut connect: Vec<String>,
+    no_genesis: bool,
+    noise_key_file: Option<PathBuf>,
+) -> Result<()> {
+    if !no_genesis && !connect.iter().any(|peer| peer == DEFAULT_GENESIS_PEER) {
+        connect.insert(0, DEFAULT_GENESIS_PEER.to_string());
+    }
+
+    let noise_static_key = if let Some(path) = noise_key_file {
+        let raw = std::fs::read(&path)?;
+        raw.as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("P2P Noise key must be exactly 32 bytes"))?
+    } else {
+        let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted P2P node").await?;
+        grid::passkey::p2p_noise_static_key(&config_dir, &dek)?
+    };
+
+    let peer = PeerOptions {
+        node_id: cfg.node_id.clone(),
+        name: cfg.name.clone(),
+        class: cfg.class.to_string(),
+        listen,
+        connect,
+        score: 0.0,
+        genesis_url: Some(DEFAULT_GENESIS_URL.to_string()),
+        genesis_pubkey: Some(DEFAULT_GENESIS_PUBKEY.to_string()),
+        gp_id: None,
+        realm: None,
+        pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
+        noise_static_key,
+        config_dir,
+    };
+
+    println!("GRID NODE includes P2P peer + host + mine");
+    tokio::select! {
+        result = run_peer(peer) => result,
+        result = run_node(cfg) => result,
     }
 }
 

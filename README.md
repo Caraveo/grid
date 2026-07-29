@@ -126,13 +126,13 @@ Requires [Rust](https://rustup.rs) only when building from source (the installer
 
 ---
 
-## Quick start — host + mine
+## Quick start — P2P + host + mine
 
 | Track | Command | What | Earn |
 |-------|---------|------|------|
 | **Host** | `grid host` | Pull useful **container** jobs, serve isolated | **Higher** |
 | **Mine** | `grid mine` | PoR / transactional-security work (`blake3_work`) | **Slower** |
-| **Both** | `grid node` | Host + mine on one box | mixed |
+| **All-in-one** | `grid node` | P2P peer + host + mine on one box | mixed |
 
 ```bash
 # once
@@ -302,10 +302,10 @@ grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
 ### P2P mesh (GP discovery + encrypted transport)
 
 ```bash
-# terminal A — Genesis is dialed automatically
+# Peer-only node — verifies/replicates the chain without mining
 grid peer --with-bench
 
-# terminal B — host + mine is a separate process
+# All-in-one node — encrypted P2P + host + mine; Genesis is automatic
 GRID_COORDINATOR=https://coordinator.grid-compute.com grid node
 ```
 
@@ -320,8 +320,8 @@ an IP-hiding relay is a separate service and is not implied by GP naming.
 | Command | What |
 |---------|------|
 | `grid coord` | Job coordinator |
-| `grid node` | Miner — claim work, earn |
-| `grid peer` | **P2P** listen/dial, hello, ping RTT, peer gossip |
+| `grid node` | **All-in-one** P2P peer + host + mine |
+| `grid peer` | **P2P-only** listen/dial, chain replication, hello, ping RTT, peer gossip |
 | `grid auth` | Protect operator keys (passkey / password / 24-word / combo / nocrypt) |
 | `grid registry` | **Public mesh registry** (grid-compute.com) |
 | `grid genesis` | Phase 0 signed truth / ban list (local authority) |
@@ -341,9 +341,9 @@ an IP-hiding relay is a separate service and is not implied by GP naming.
 **In (minimal MVP)**
 
 - Single **Rust** `grid` binary  
-- Jobs: `coord` + `node` + `submit` (verify + PoR earn)  
+- Jobs: `coord` + `node` + `submit` (verify + PoR earn)
 - **`grid bench`** — hash + memory scores  
-- **`grid peer`** — TCP P2P hello / ping RTT / peer gossip  
+- **`grid peer`** — TCP P2P chain replication / hello / ping RTT / peer gossip
 - Class **S / M / L**, Bitcoin as **Transact Security Layer**
 
 **Later**
