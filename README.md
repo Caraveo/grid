@@ -1,529 +1,329 @@
 <p align="center">
-  <img src="./logo.svg" alt="GRID" width="72" height="72" />
+  <img src="./logo.svg" alt="GRID" width="84" height="84" />
 </p>
 
 <h1 align="center">GRID</h1>
 
 <p align="center">
-  <strong>Useful mining</strong> for a planetary compute network.<br/>
-  Run a node. Do real work. Earn <strong>GRID</strong>. Cash out toward <strong>Bitcoin</strong>.
+  <strong>A proof-of-resource compute network.</strong><br />
+  Verify signed settlement, contribute useful capacity, and operate a private-by-default peer.
 </p>
-
-[![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
-[![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.19-blue.svg)](https://github.com/Caraveo/grid/releases)
-[![Status](https://img.shields.io/badge/status-Public%20Genesis%20Pilot-orange.svg)](https://explorer.grid-compute.com/)
 
 <p align="center">
-  <em>Bitcoin is the Transact Security Layer</em> — GRID meters compute; BTC secures value.
+  <a href="https://grid-compute.com">Website</a> ·
+  <a href="https://grid-compute.com/quick">Quick start</a> ·
+  <a href="https://explorer.grid-compute.com">Explorer</a> ·
+  <a href="https://docs.grid-compute.com">Docs</a> ·
+  <a href="https://discord.gg/nVs7NBCuqZ">Discord</a>
 </p>
 
----
+[![Version](https://img.shields.io/badge/version-0.2.19-blue.svg)](https://github.com/Caraveo/grid/releases/tag/v0.2.19)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Language](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![Network](https://img.shields.io/badge/network-Genesis%20pilot-ec8a26.svg)](https://explorer.grid-compute.com)
 
-## Network status — public Genesis pilot
+> **Network status:** GRID is a public, Genesis-led production pilot. It is **not** decentralized mainnet consensus and must not be represented as such. A single Genesis leader currently finalizes canonical blocks; enforced independent validator quorum, audits, and hardened production operations remain launch gates.
 
-GRID v0.2.19 is published for macOS (Intel and Apple silicon), Linux, and
-Windows. The public network has a signed Genesis chain, encrypted P2P peer,
-coordinator, block producer, and live explorer:
+## What GRID is
 
-- [Explorer](https://explorer.grid-compute.com/) — signed blocks, coordinator, and privacy-rounded node telemetry
-- [Genesis](https://genesis.grid-compute.com/health) — canonical signed-truth and chain health
-- [Coordinator](https://coordinator.grid-compute.com/v1/status) — proof-of-resource settlement status
-- [v0.2.19 release](https://github.com/Caraveo/grid/releases/tag/v0.2.19) — verified binaries for all supported platforms
-- [Discord](https://discord.gg/nVs7NBCuqZ) — GRID community and operator discussion
+GRID is a Rust CLI and operator runtime for a compute network with four distinct roles:
 
-This is a **public production pilot**, not a decentralized mainnet. It supports
-running a peer, hosting capacity, and testing the reward flow; it is not a claim that
-validator quorum, treasury governance, or a token market are complete. See
-[Decentralized mainnet gate](#decentralized-mainnet-gate) before describing
-GRID as mainnet-ready.
+| Role | Command | Does | Does not do |
+| --- | --- | --- | --- |
+| Peer | `grid peer` | Encrypted P2P discovery, block replication, signed-chain verification | Mine or host workloads |
+| Miner | `grid mine` | Peer duties plus capped proof-of-resource work and settlement polling | Run customer containers |
+| Host | `grid host` | Serve approved isolated workload requests through the Engine runtime | Mine proof-of-resource work |
+| Node | `grid node` | Peer + miner + host together | Replace a validator quorum |
 
----
+`grid engine start` is the host-only Engine entry point; `grid host` uses the same host path. `grid start` is an alias for the all-in-one node flow unless passed an Engine manifest.
 
-## Get started now
+### Current network components
 
-### macOS
+```text
+                         public, privacy-rounded telemetry
+  Explorer  <──────────────────── Cloudflare registry
+     │                                        ▲
+     │ canonical status                       │ signed heartbeat (opt-in location)
+     ▼                                        │
+Genesis node ── signed blocks / P2P sync ── GRID peers and miners
+     │                                        │
+     └───────── coordinator ── verified settlements ── hosts
+                                                   │
+                                                   └── approved container work (staged)
+```
+
+- **Genesis** is the current trust anchor, canonical signed-block source, and ban-list source of truth.
+- **Coordinator** assigns and verifies pilot proof-of-resource work and records settlement data.
+- **P2P peers** use a Noise XX encrypted transport for GRID protocol messages and replicate/verify signed blocks.
+- **Cloudflare registry and explorer** show network health and coarse, opt-in geographic telemetry; they are not a consensus authority.
+- **GRID Engine** is the platform-aware container-host foundation. Its first approved workload profile is Git-backed Caddy with tunnel-only exposure.
+
+## Start here
+
+### Install a release
+
+The installer selects the matching published binary, verifies the release artifacts, and installs `grid` into `~/.local/bin` by default.
 
 ```bash
 curl -fsSL https://grid-compute.com/downloads/install.sh | bash
-brew install lima
-limactl start --name=grid-containerd template:default
-nerdctl info
-grid init --name my-node --class S
-grid auth keyphrase
-grid node
+hash -r
+grid --version
 ```
 
-### Linux
+For reinstall/upgrade:
 
 ```bash
-curl -fsSL https://grid-compute.com/downloads/install.sh | bash
-# Install rootless containerd + nerdctl using your distribution or nerdctl release.
-nerdctl info
-grid init --name my-node --class S
-grid auth keyphrase
-grid node
-```
-
-### Windows (WSL2)
-
-```powershell
-wsl --install -d Ubuntu
-wsl -d Ubuntu
-```
-
-Then, inside Ubuntu, follow the Linux commands above. GRID host jobs use the
-same Linux containerd isolation in WSL2; a native Windows binary is published
-for CLI use, but native Windows containers are intentionally not used for host
-jobs.
-
-## Install details
-
-### One-liner (`curl`) — recommended
-
-```bash
-curl -fsSL https://grid-compute.com/downloads/install.sh | bash
-```
-
-Then open a **new terminal** (or `hash -r`) and verify:
-
-```bash
-which grid && grid -V
-grid auth --help      # must list passkey / combo / …
-```
-
-### Reinstall / upgrade / options
-
-```bash
-# Replace any existing binary (including legacy CLIs also named `grid`)
 curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --force
+```
 
-# Always cargo-build from a clone
-git clone https://github.com/Caraveo/grid.git
-cd grid
-./scripts/install.sh --from-source --force
+For a system-wide installation (may request `sudo`):
 
-# Prefer /usr/local/bin (may prompt for sudo)
+```bash
 curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --system --force
-
-# Custom directory
-curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --prefix="$HOME/bin"
 ```
 
-### From a git clone
+### Initialize an operator identity
 
 ```bash
-git clone https://github.com/Caraveo/grid.git
-cd grid
-./scripts/install.sh --local --force
-# or
-make install                 # → ~/.local/bin/grid
-make install-system          # → /usr/local/bin/grid
+grid init --name my-node --class S
+grid auth keyphrase
 ```
 
-### What the installer does
+`grid auth keyphrase` creates a 24-word recovery phrase. Store it offline. Do not paste it into chat, a ticket, a website, or a repository. Other local vault choices are available through `grid auth --help`.
 
-1. Downloads the matching signed GRID release binary (`grid-<os>-<arch>`)
-2. Verifies the pinned release-signing key, signature, and SHA-256 checksum
-3. Installs to **`~/.local/bin/grid`** by default (or `--prefix` / `--system`)
-4. **Detects Phase 1** via `grid auth` — refuses/replaces legacy binaries that also used the name `grid`
-5. Backs up non-Phase-1 copies as `*.legacy.bak`
-6. Ensures `~/.local/bin` is on **PATH** (appends to `~/.zshrc` / `~/.bashrc` when safe)
-7. Writes `~/.grid/install-info.txt` and prints next steps
-
-If `grid auth` is “unrecognized”, you’re still on a **legacy** binary:
+### Choose one role
 
 ```bash
-which -a grid
-curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --force --system
-hash -r && grid auth --help
-```
+# P2P replica only: sync and verify, no mining and no hosted workload
+grid peer --with-bench
 
-### Uninstall
+# P2P replica plus proof-of-resource work; no container hosting
+grid mine
 
-```bash
-curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --uninstall
-# or from a clone: make uninstall
-```
+# Approved isolated workload host; mining stays off
+grid host
 
-Leaves `~/.grid/` config and keys alone.
-
-Requires [Rust](https://rustup.rs) only when building from source (the installer can bootstrap rustup).
-
----
-
-## Quick start — P2P + host + mine
-
-| Track | Command | What | Earn |
-|-------|---------|------|------|
-| **Host** | `grid host` | Pull useful **container** jobs, serve isolated | **Higher** |
-| **Mine** | `grid mine` | P2P replica + PoR / transactional-security work (`blake3_work`) | **Slower** |
-| **All-in-one** | `grid node` | P2P peer + host + mine on one box | mixed |
-
-```bash
-# once
-grid init --name garage --class S
-grid auth keyphrase       # or: passkey | password | combo
-
-# Public all-in-one node: encrypted P2P + host + mine
+# One machine doing peer + mine + host duties
 grid node
+```
 
-# Miner-only node: encrypted P2P block replication + PoR mining; no hosting
+By default, peer-bearing commands dial the canonical Genesis peer and listen on TCP `9900`. Outbound-only operation works; forwarding TCP `9900` makes a node more useful to the mesh. Use `--no-genesis` / `--p2p-no-genesis` only when operating the Genesis side or an isolated test network.
+
+For the concise operator guide, see [grid-compute.com/quick](https://grid-compute.com/quick).
+
+## Operator basics
+
+### Observe the node and the network
+
+```bash
+grid status                 # local configuration and host resources
+grid resources              # CPU / memory sample
+grid bench --duration 5     # local benchmark
+grid stats                  # coordinator status and pilot earnings state
+grid registry               # public privacy-preserving registry view
+```
+
+Live public views:
+
+- [Explorer](https://explorer.grid-compute.com) — signed blocks, telemetry, capacity estimates, and coordinator status
+- [Genesis health](https://genesis.grid-compute.com/health) — Genesis service health
+- [Coordinator status](https://coordinator.grid-compute.com/v1/status) — settlement service status
+
+### Opt into the globe
+
+The globe is optional. GRID never needs latitude/longitude in order to peer, mine, or host. If you choose to appear, publish a deliberately coarse location only; the registry is designed not to display IP addresses, ports, wallets, or coordinator URLs.
+
+Create `~/.grid/env` with permissions restricted to your user:
+
+```bash
+GRID_GLOBE_LAT=35.1
+GRID_GLOBE_LNG=-106.6
+GRID_GLOBE_REGION=NA-US-NM
+```
+
+Then restart the relevant `grid peer`, `grid mine`, or `grid node` process. The node signs registry heartbeats with a dedicated local key; private key material remains on the operator machine.
+
+### Devnet reward wallet
+
+The Solana path is a **development-network pilot** for testing reward settlement UX, not a public-market or mainnet launch.
+
+```bash
+grid solana create
+grid solana status
+```
+
+Set a payout address only when you control that devnet wallet:
+
+```bash
+export GRID_SOLANA_REWARD_WALLET=YOUR_DEVNET_SOLANA_ADDRESS
 grid mine
-
-# Peer-only node: verifies/replicates the chain without mining
-grid peer --with-bench
 ```
 
-`grid node` automatically dials the canonical Genesis peer and listens on
-`0.0.0.0:9900`. Do not run a separate `grid peer` on the same machine unless
-you use a different `--listen` / `--p2p-listen` port.
+Verified work may be eligible for a coordinator-controlled pilot settlement. Uptime alone does not mint value, devnet assets have no economic value, and mainnet token issuance is intentionally outside this CLI flow.
 
-For a local development coordinator, use the separate commands below:
+## GRID Engine and hosting
+
+GRID Engine prepares the runtime boundary for voluntary compute hosts. It is intentionally restrictive: containers must not receive the GRID vault, node keys, host paths, privileged capabilities, the container socket, or arbitrary host ports.
+
+### Runtime preparation
 
 ```bash
-
-# terminal 1 — coordinator (auto mine PoR + demo host jobs)
-grid coord --bind 0.0.0.0:8787
-
-# terminal 2 — name a compute you own, then HOST useful work
-grid launch garage --public          # default public; use --private for fabric-only
-grid host                            # pull container_work · higher earn
-
-# terminal 3 — optional P2P MINE security work (no service hosting)
-grid mine                            # replicate/verify blocks + blake3_work · slower earn
-
-# inspect
-grid compute list
-grid stats
-grid wallet
+grid engine doctor
+grid engine install
+grid engine start
 ```
 
-### Automatic Solana devnet rewards
+Supported runtime approach:
 
-The pilot coordinator can forward each verified `grid mine` or `grid host`
-settlement to the localhost-only GRID Solana reward relayer. Set the miner's
-devnet payout address before starting the node:
+| Platform | Host runtime |
+| --- | --- |
+| Linux | containerd + nerdctl + gocryptfs |
+| macOS | Lima Linux VM + nerdctl + gocryptfs |
+| Windows | Ubuntu in WSL2 + the Linux workflow |
+
+`grid engine install` checks and installs the supported runtime prerequisites for the current platform. It may invoke the platform package manager or WSL setup, so read its output and approve only on machines you administer.
+
+### Service and encrypted-volume scaffolding
 
 ```bash
-export GRID_SOLANA_REWARD_WALLET=YOUR_SOLANA_DEVNET_WALLET
-grid mine
+# Create a reviewable P2P Engine manifest; it does not start a workload.
+grid engine init grid-engine.yaml --name grid-node
+
+# Prepare key metadata for one encrypted service volume.
+grid engine volume prepare my-site-data
+grid engine volume status my-site-data
+
+# Write and validate the narrow initial service contract.
+grid engine service init-web site.yaml --name my-site --repo https://github.com/OWNER/REPO.git
+grid engine service check site.yaml
+
+# For one private Git repository, generate a vault-wrapped deploy key.
+grid engine service key-create --name my-site --repo git@github.com:OWNER/REPO.git
 ```
 
-The coordinator operator must enable earnings and configure the local relayer.
-The relayer setup and issuer instructions live in the standalone
-`grid-solana` repository. Mainnet is intentionally refused by that relayer.
+The current Engine code creates reviewable manifests, runtime checks, encrypted-volume key scaffolding, and one-per-repository deploy-key scaffolding. It **does not yet mount encrypted volumes, clone/deploy a repository, run Caddy, or expose a tunnel.** Those steps remain deliberately gated behind the host-execution audit work.
 
-Containers are **fully isolated** from the host (no host mounts, cap-drop ALL, resource limits). The host runtime is **containerd via nerdctl**; GRID refuses to fall back to Docker.
+### Planned first workload profile
 
-Runtime support: Linux runs rootless containerd/nerdctl directly. macOS uses a
-dedicated rootless Lima Linux VM. Windows runs the identical Linux workflow in
-WSL2; run `powershell -ExecutionPolicy Bypass -File scripts/install-runtime.ps1`
-to check it. Native Windows containers are intentionally not used for GRID host
-jobs because their isolation controls do not match the Linux contract.
-
-### Launcher container access
-
-An interactive job may request `"tunnel": true` with `"servicePort": 41783`.
-This is the only GRID container service port. It is bound to `127.0.0.1` on
-the compute host, never to a LAN/WAN interface; it is reserved for an assigned
-launcher’s authenticated encrypted GRID peer session. Arbitrary host ports,
-host networking, Docker socket mounts, and host shells are not permitted.
-
-Launcher admission is tied to a 32-byte public key. Requests containing
-Docker/Kubernetes host-escape controls (privileged mode, host networking/PID,
-host paths, capabilities, or Docker socket access) are rejected and the
-launcher key is permanently banned by the coordinator.
-
-Transport design: a launcher and assigned remote node use their own ephemeral
-X25519 session keys; GRID/MESH may hold a separate broker key for encrypted
-locator and capability metadata, but that broker key must not decrypt workload
-content. A standard container runtime cannot hide plaintext from the host that
-executes it. Host-blind workloads therefore require verified confidential
-compute attestation (TDX/SEV-SNP or equivalent) and are not enabled by this
-pilot runtime.
-
-### Public compute registry (grid-compute.com)
-
-Hosts announce capacity to the site; anyone can check availability:
-
-```bash
-grid compute available              # free slots only
-grid compute available --all        # include busy/offline
-grid compute announce               # re-push local computes
-grid registry                       # peers + compute stats
+```text
+Git repository → host-side authenticated fetch → Caddy container → GRID tunnel
+                         │                           │
+                         └── vault/key material never enters container ──┘
 ```
 
-API: `GET https://grid-compute.com/api/registry/computes?available=1`  
-Announce: `POST /api/registry/computes` (registered-capacity authorization). No IPs stored.
+The first profile allows only an approved Caddy image, a Git source, the fixed service port `41783`, and `grid-tunnel` exposure. Arbitrary images, direct WAN/LAN host exposure, host networking, host mounts, and privileged container settings are rejected by design.
 
+## Security model and limits
 
-Work kind: `blake3_work` payload `seed|iterations` (default 250k iterated BLAKE3).
-Coordinator verifies by re-computing the digest. Credits land in `~/.grid/earn.json`
-and `~/.grid/coord/state.json` (survive restarts).
+### What is implemented
 
-Earnings are **disabled by default** for private-network safety. Jobs can be
-verified without minting value. Do not enable `GRID_ENABLE_EARN=1` until signed
-replica settlement has been independently validated and audited.
+- Ed25519 identities and signed Genesis/settlement data
+- Noise XX encrypted P2P transport for GRID protocol messages
+- Local operator vault modes: passkey, password, keyphrase, combo, or explicit `nocrypt`
+- Separate operator-vault and Genesis-authority key paths
+- Signed, replay-resistant registry heartbeats with opt-in coarse geography
+- P2P block synchronization followed by local signed-chain verification
+- Container runtime policy scaffolding: read-only intent, capability restrictions, CPU/memory limits, and a narrow service contract
 
-```bash
-# optional: submit extra PoR yourself
-grid submit --job blake3_work --wait
-grid stats
-```
+### Important limits
 
-### Benchmark this machine
+- A direct P2P peer can observe the other peer's network address. GRID does not presently provide an IP-hiding relay.
+- A conventional container runtime cannot prevent a host that executes a workload from seeing that workload's plaintext. Host-blind execution needs confidential-compute attestation (for example TDX or SEV-SNP), which is not enabled here.
+- Genesis-led blocks are not a decentralized validator quorum. `grid mainnet` is intentionally fail-closed while this remains true.
+- No public token price, exchange listing, or promise of monetary return is provided by this project.
 
-```bash
-grid bench
-grid bench --duration 5
-grid bench --json
-```
-
-### Public mesh registry — [grid-compute.com](https://grid-compute.com)
-
-**grid-compute.com** is the network’s public peer registry (Cloudflare).  
-Location-only — **never** IPs, ports, or endpoints.
-
-```bash
-grid registry              # list peers from https://grid-compute.com/api/registry
-grid registry --json
-```
-
-**Join the registry** (opt-in coords) — create `~/.grid/env` (mode `600`):
-
-```bash
-# ~/.grid/env   (chmod 600)  — never commit this file
-# GRID_SITE_URL defaults to https://grid-compute.com if unset
-GRID_GLOBE_LAT=37.7
-GRID_GLOBE_LNG=-122.4
-GRID_GLOBE_REGION=NA-W
-```
-
-```bash
-# ~/.grid/config.toml  (or env GRID_GLOBE_LAT / GRID_GLOBE_LNG)
-# [node]
-# globe_lat = 37.7
-# globe_lng = -122.4
-# globe_region = "NA-W"
-
-grid node   # pings registry on start + every ~5m after heartbeat
-```
-
-Skip coords → mining continues; you just won’t appear on the globe/registry.
-The node creates a dedicated mode-`0600` Ed25519 heartbeat key on first use.
-Every pulse is signed, the public node id is derived from that public key, and
-Cloudflare rejects replayed nonces atomically. No shared mesh secret is shipped
-to node operators, and private heartbeat keys never leave the machine.
-
-### Auth (protect operator keys)
-
-```bash
-grid auth                 # default = passkey
-grid auth passkey
-grid auth password
-grid auth keyphrase       # 24-word BIP39 phrase
-grid auth combo           # password → passkey → keyphrase
-grid auth nocrypt         # plain keys only (0600)
-grid auth login
-grid auth status
-grid auth delete --wipe-keys
-```
-
-Secrets live under `~/.grid/keys/` and `~/.grid/passkey/` — gitignored. Never commit them.
-
-Operator vault modes are **not** required for genesis authority. Genesis uses
-`grid genesis init` keys under `~/.grid/genesis/` — separate from the vault.
-
-### Genesis registry
-
-```bash
-grid genesis init
-grid genesis serve --bind 127.0.0.1:9100
-grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
-```
-
-### P2P mesh (GP discovery + encrypted transport)
-
-```bash
-# Peer-only node — verifies/replicates the chain without mining
-grid peer --with-bench
-
-# Miner-only — encrypted P2P block replica + mine; no service hosting
-grid mine
-
-# All-in-one node — encrypted P2P + host + mine; Genesis is automatic
-GRID_COORDINATOR=https://coordinator.grid-compute.com grid node
-```
-
-You should see **hello**, **pong rtt=… ms**, and a **peers** list.
-
-Peer discovery uses the existing `grid-compute.com` GP directory when a realm
-is supplied. The directory is a locator only; every TCP session completes a
-Noise XX (`X25519 + ChaChaPoly + BLAKE2s`) handshake before GRID protocol
-messages are sent. Direct peers can still observe each other’s network address;
-an IP-hiding relay is a separate service and is not implied by GP naming.
-
-| Command | What |
-|---------|------|
-| `grid coord` | Job coordinator |
-| `grid node` | **All-in-one** P2P peer + host + mine |
-| `grid mine` | **Miner-only** encrypted P2P replication + PoR work; no host containers |
-| `grid peer` | **P2P-only** listen/dial, chain replication, hello, ping RTT, peer gossip |
-| `grid auth` | Protect operator keys (passkey / password / 24-word / combo / nocrypt) |
-| `grid registry` | **Public mesh registry** (grid-compute.com) |
-| `grid genesis` | Phase 0 signed truth / ban list (local authority) |
-| `grid bench` | **Benchmark** CPU hash + memory throughput |
-| `grid init` | Write `~/.grid/config.toml` |
-| `grid submit` | Submit allowlisted job (`echo`, `hash_file`) |
-| `grid stats` | Jobs + nodes |
-| `grid status` | Config + host metrics + Bitcoin TSL |
-| `grid mainnet` | **Fail-closed decentralized-mainnet launch gate** |
-| `grid wallet` | Balance stub + GRID → BTC exit reminder |
-| `grid resources` | CPU / memory sample |
-
----
-
-## What Phase 1 is
-
-**In (minimal MVP)**
-
-- Single **Rust** `grid` binary  
-- Jobs: `coord` + `node` + `submit` (verify + PoR earn)
-- **`grid bench`** — hash + memory scores  
-- **`grid peer`** — TCP P2P chain replication / hello / ping RTT / peer gossip
-- Class **S / M / L**, Bitcoin as **Transact Security Layer**
-
-**Later**
-
-- Validator proposal/vote transport and enforced 3-of-4 quorum certificates
-- Four independently operated validators and an external consensus audit
-- NAT traversal / relay hardening and critical-latency fabric
-- **Edge wallets** (below)
-
-### Decentralized mainnet gate
+## Mainnet launch gate
 
 ```bash
 grid mainnet
 grid mainnet --json
-grid mainnet --migrate-storage   # one-time, keeps legacy blocks.json snapshot
 ```
 
-This command intentionally reports `NOT READY` while blocks are finalized by
-one Genesis leader. GRID already has Ed25519 validator-vote and 2f+1 quorum
-certificate verification primitives, but they are not yet wired into block
-proposal/finality. The production pilot must not be described as decentralized
-mainnet until certificates are enforced, at least four independent validators
-are live, the separate 5B treasury state is implemented, block persistence is
-append-only with tested backups, and an external audit passes.
+GRID should remain labelled a Genesis pilot until all of the following are complete:
 
----
+1. Independent validators propose and verify blocks with enforced quorum certificates.
+2. Validator keys, rotation, slashing/dispute procedures, and governance are documented and tested.
+3. Block persistence is append-only, segmented, backed up, and recovery-tested.
+4. Coordinator and Engine execution boundaries receive independent security review.
+5. Public operators can bootstrap, sync, monitor, and recover without relying on a single private machine.
+6. Token allocation, vesting, treasury controls, liquidity disclosures, and legal/compliance work are finalized separately from the devnet pilot.
 
-## Edge wallets (roadmap)
+`grid mainnet --migrate-storage` is a one-time, non-destructive storage migration helper for the block store. Do not use it as evidence that the launch gate has passed.
 
-Operators and users need more than a CLI. **Edge wallets** are first-class clients that hold keys, show earn/balance, and move value **GRID → BTC** (TSL) without a custodial middleman where possible.
+## Build from source
 
-### Principles
+Requirements: a current stable [Rust toolchain](https://rustup.rs), Git, and platform build tools. Container runtime prerequisites are required only for host/Engine work.
 
-| Principle | Meaning |
-|-----------|---------|
-| **Keys at the edge** | Seed / keys live on user device or user-controlled service HSM — not on the coordinator by default |
-| **Bitcoin TSL** | Cash-out and high-value finality prefer **BTC**; GRID is utility for compute |
-| **Same identity story** | Node id / operator cluster / wallet address link without forcing one UI |
-| **Least custody** | Default non-custodial; optional “services” tier for teams who want managed ops |
-| **Devnet is non-economic** | Solana devnet validates token controls and wallet UX; devnet GRID has no value |
-
-### Surface map
-
-| Surface | Who | Role | Phase target |
-|---------|-----|------|----------------|
-| **Software (desktop)** | Miners, power users | Full node control: init, node, status, earn, export keys, GRID→BTC swap UX | **P2** thin wallet UI wrapping `grid`; **P3** full desktop wallet |
-| **Mobile** | Operators on the go, small miners | Monitor earn, alerts, approve cash-out, watch-only node status; limited signing | **P3** watch + notify; **P4** sign + Lightning/BTC exit |
-| **Web** | Buyers + light operators | Submit jobs, pay for capacity, view invoices, connect software/mobile wallet | **P2** buyer portal; **P3** wallet connect (WalletConnect-style or GRID session keys) |
-| **Services** | Fleets, datacenters, studios | API keys, multi-node fleet, payroll to BTC, SSO, audit logs, optional custody | **P3+** operator API + service wallet policies |
-
-```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│  Software    │  │    Mobile    │  │     Web      │  │   Services   │
-│  desktop app │  │  iOS/Android │  │  buyer/ops   │  │  fleet API   │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-       │                 │                 │                 │
-       └─────────────────┴────────┬────────┴─────────────────┘
-                                  ▼
-                    ┌─────────────────────────┐
-                    │  GRID edge wallet core  │
-                    │  keys · earn · identity │
-                    └───────────┬─────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              ▼                 ▼                 ▼
-        grid node / CLI   utility rail (GRID)   Bitcoin TSL
+```bash
+git clone https://github.com/Caraveo/grid.git
+cd grid
+cargo build --release
+./target/release/grid --help
 ```
 
-### Capabilities by surface (planned)
+Install a local build:
 
-| Capability | Software | Mobile | Web | Services |
-|------------|:--------:|:------:|:---:|:--------:|
-| Run / control local node | ● | ○ | — | ● (remote agents) |
-| View earn / PoR score | ● | ● | ● | ● |
-| Job submit (buyer) | ● | ○ | ● | ● |
-| Non-custodial keys | ● | ● | session / connect | policy-based |
-| GRID → BTC exit | ● | ● | via connect | batch / payroll |
-| Multi-user / SSO | — | — | ○ | ● |
-| Fleet + audit | — | — | ○ | ● |
-
-● full · ○ partial · — not primary
-
-### Delivery sequence
-
-1. **P1 (now)** — CLI `grid wallet` stub; earn on coordinator; TSL messaging  
-2. **P2** — Desktop **software wallet** (Tauri or native) calling local `grid`; web **buyer** portal  
-3. **P3** — Genesis Earn balances in wallet; mobile **watch + alerts**; service **API + API keys**  
-4. **P4** — Mobile signing + BTC/Lightning cash-out; web WalletConnect-class; fleet payroll to BTC  
-
-### Security notes (edge)
-
-- Never ship seed phrases through the coordinator API  
-- Separate **node operator key** from **treasury / cash-out key** when possible  
-- Services tier: explicit custody mode + audit; default remains non-custodial  
-- Bitcoin TSL: prefer on-device or user-wallet BTC addresses for exits  
-
-Implementation tracking lives in [technical.md](./technical.md); token rules in [GRID_Token_Specification.md](./GRID_Token_Specification.md).
-
----
-
-## Docs
-
-| File | Role |
-|------|------|
-| [technical.md](./technical.md) | Build plan, cost, phases |
-| [GRID_White_Paper.md](./GRID_White_Paper.md) | Vision |
-| [GRID_Token_Specification.md](./GRID_Token_Specification.md) | Token + Bitcoin TSL + Genesis Earn |
-| [letter.md](./letter.md) | Letter to miners |
-| [OnePage.pdf](./OnePage.pdf) | Pitch |
-| [scripts/install.sh](./scripts/install.sh) | `curl \| bash` installer |
-
-## Layout
-
+```bash
+./scripts/install.sh --from-source --force
+# or
+make install
 ```
-src/                 Rust grid CLI + coordinator
-scripts/install.sh   curl installer
-legacy/ts/           historical TS MVP (optional)
-contracts/           future on-rail stubs
+
+Run the test suite:
+
+```bash
+cargo test
+cargo clippy --all-targets -- -D warnings
 ```
+
+## Repository map
+
+```text
+src/                 Rust CLI, P2P, chain, coordinator, wallet, Engine, and policy modules
+src/p2p/             Encrypted peer transport, discovery, sync, and gossip
+src/blockchain.rs    Signed block and settlement-chain validation
+src/engine.rs        Runtime checks, Engine manifests, encrypted-volume and service scaffolding
+scripts/             Installer and platform helpers
+deploy/              Deployment material, including AWS resources
+docs/                Operator and implementation notes
+wallet-apps/          Desktop and platform wallet work
+contracts/            Solana/token-related project material
+legacy/ts/            Historical TypeScript prototype; not the current CLI
+```
+
+Related repositories in the GRID workspace:
+
+| Project | Purpose |
+| --- | --- |
+| `grid-site` | Public website, explorer UI, documentation UI, and Cloudflare integration |
+| `grid-coordinator` | Coordinator-facing service material |
+| `grid-net` | Network tooling and support code |
+| `grid-solana` | Solana devnet token/reward experimentation |
+
+## Documentation
+
+- [Quick start](https://grid-compute.com/quick)
+- [Proof of Resource](https://grid-compute.com/por)
+- [Network explorer](https://explorer.grid-compute.com)
+- [Public documentation](https://docs.grid-compute.com)
+- [White paper](https://grid-compute.com/white-paper)
+- [Token allocation](https://grid-compute.com/alloc)
+- [Container Engine overview](https://engine.grid-compute.com)
+
+Local project references, where present:
+
+- [`technical.md`](./technical.md) — implementation notes and phases
+- [`GRID_White_Paper.md`](./GRID_White_Paper.md) — project vision
+- [`GRID_Token_Specification.md`](./GRID_Token_Specification.md) — token and settlement design
+- [`OnePage.pdf`](./OnePage.pdf) — project one-pager
+- [`scripts/install.sh`](./scripts/install.sh) — release installer
+
+## Contributing and reporting security issues
+
+Please open an issue or discussion before proposing a large protocol, token, or network-policy change. Never include seed phrases, private keys, vault contents, coordinator secrets, production credentials, or a vulnerable exploit proof of concept in an issue or pull request.
+
+For a potential security vulnerability, contact the project maintainers privately through the official project channels rather than publishing an exploit path.
 
 ## License
 
-MIT (code). Docs CC-BY-4.0 where noted.
-
----
-
-```bash
-curl -fsSL https://grid-compute.com/downloads/install.sh | bash
-grid init --name my-node --class S
-grid auth keyphrase
-grid node
-grid peer --with-bench  # use this instead of `grid node` for P2P-only operation
-```
-
-*Solana devnet is for testing only. Mainnet requires audit and multisig. Bitcoin secures the exit.*
+MIT for code unless a file states otherwise. Documentation and branded material may carry their own notices.
