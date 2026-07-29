@@ -17,7 +17,7 @@
   <a href="https://discord.gg/nVs7NBCuqZ">Discord</a>
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.2.19-blue.svg)](https://github.com/Caraveo/grid/releases/tag/v0.2.19)
+[![Version](https://img.shields.io/badge/version-0.2.20-blue.svg)](https://github.com/Caraveo/grid/releases/tag/v0.2.20)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Language](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![Network](https://img.shields.io/badge/network-Genesis%20pilot-ec8a26.svg)](https://explorer.grid-compute.com)
