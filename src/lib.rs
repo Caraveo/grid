@@ -16,6 +16,7 @@ pub mod consensus;
 pub mod coord;
 pub mod crypto;
 pub mod earn;
+pub mod engine;
 pub mod ember;
 pub mod executor;
 pub mod wallet;

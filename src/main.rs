@@ -164,8 +164,16 @@ enum Commands {
 
     /// Alias for `grid node` (P2P peer + host + mine)
     Start {
+        /// GRID Engine YAML manifest (for example: grid start node.yaml)
+        manifest: Option<PathBuf>,
         #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
         coordinator: Option<String>,
+    },
+
+    /// Platform-aware isolated runtime and P2P node scaffolding
+    Engine {
+        #[command(subcommand)]
+        action: EngineCmd,
     },
 
     /// Submit a job (default: blake3_work mine PoR)
@@ -446,6 +454,33 @@ enum ComputeCmd {
     Export { name: String },
     /// Import manifest JSON from file or stdin (-)
     Import { path: String },
+}
+
+#[derive(Subcommand)]
+enum EngineCmd {
+    /// Inspect this platform's production container-runtime prerequisites
+    Doctor,
+    /// Install and verify the supported isolated container runtime for this platform
+    Install,
+    /// Start the Engine-managed host only (no Proof-of-Resource mining)
+    Start {
+        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
+        coordinator: Option<String>,
+        /// Only serve jobs for this named compute
+        #[arg(long)]
+        compute: Option<String>,
+        #[arg(long, env = "GRID_NODE_ID")]
+        id: Option<String>,
+        #[arg(long)]
+        poll_ms: Option<u64>,
+    },
+    /// Write a reviewable GRID Engine YAML manifest without overwriting files
+    Init {
+        #[arg(default_value = "grid-engine.yaml")]
+        path: PathBuf,
+        #[arg(long, default_value = "grid-node")]
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -755,7 +790,7 @@ async fn main() -> Result<()> {
             println!();
             let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
-            run_host(cfg, compute).await?;
+            run_engine_host(cfg, compute).await?;
         }
 
         Commands::Mine {
@@ -861,11 +896,26 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Commands::Start { coordinator } => {
+        Commands::Start { manifest, coordinator } => {
             banner::print_mark();
             println!();
-            let cfg = load_cfg(&config_dir, coordinator, None, None, None, None)?;
+            let engine = manifest.as_deref().map(grid::engine::load).transpose()?;
+            let cfg = load_cfg(
+                &config_dir,
+                coordinator,
+                None,
+                engine.as_ref().map(|m| m.spec.class.clone()),
+                None,
+                None,
+            )?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
+            if let Some(ref m) = engine {
+                println!("GRID Engine manifest: {}", m.metadata.name);
+                println!("  runtime: {} CPU · {} MiB · job network={}", m.spec.runtime.cpus, m.spec.runtime.memory_mib, m.spec.runtime.network_for_jobs);
+                println!("  storage: encrypted persistent volumes · {} MiB quota", m.spec.storage.volume_quota_mib);
+                run_engine_peer(cfg, config_dir.clone(), m.spec.p2p.listen.clone(), m.spec.p2p.connect.clone()).await?;
+                return Ok(());
+            }
             run_combined_node(
                 cfg,
                 config_dir.clone(),
@@ -876,6 +926,23 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+
+        Commands::Engine { action } => match action {
+            EngineCmd::Doctor => grid::engine::doctor(),
+            EngineCmd::Install => grid::engine::install()?,
+            EngineCmd::Start { coordinator, compute, id, poll_ms } => {
+                banner::print_mark();
+                println!();
+                let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
+                std::env::set_var("GRID_CONFIG_DIR", &config_dir);
+                run_engine_host(cfg, compute).await?;
+            }
+            EngineCmd::Init { path, name } => {
+                grid::engine::scaffold(&path, &name)?;
+                println!("✓ GRID Engine manifest written: {}", path.display());
+                println!("  review it, then: grid start {}", path.display());
+            }
+        },
 
         Commands::Submit {
             job,
@@ -1744,6 +1811,49 @@ fn load_operator_env(config_dir: &std::path::Path) {
             unsafe { std::env::set_var(k, v) };
         }
     }
+}
+
+/// GRID Engine phase 1 is deliberately P2P-only. A YAML manifest must never
+/// silently start the host or mining loops.
+async fn run_engine_peer(
+    cfg: NodeConfig,
+    config_dir: PathBuf,
+    listen: String,
+    mut connect: Vec<String>,
+) -> Result<()> {
+    if !connect.iter().any(|peer| peer == DEFAULT_GENESIS_PEER) {
+        connect.insert(0, DEFAULT_GENESIS_PEER.to_string());
+    }
+    let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted GRID Engine P2P peer").await?;
+    let noise_static_key = grid::passkey::p2p_noise_static_key(&config_dir, &dek)?;
+    println!("GRID Engine starts P2P only — host and mine remain off");
+    run_peer(PeerOptions {
+        node_id: cfg.node_id,
+        name: cfg.name,
+        class: cfg.class.to_string(),
+        listen,
+        connect,
+        score: 0.0,
+        genesis_url: Some(DEFAULT_GENESIS_URL.to_string()),
+        genesis_pubkey: Some(DEFAULT_GENESIS_PUBKEY.to_string()),
+        gp_id: None,
+        realm: None,
+        pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
+        noise_static_key,
+        config_dir,
+    }).await
+}
+
+/// The canonical host path used by both `grid host` and `grid engine start`.
+/// It intentionally never starts `grid mine`.
+async fn run_engine_host(cfg: NodeConfig, compute: Option<String>) -> Result<()> {
+    if !compute::containerd_available().await {
+        anyhow::bail!(
+            "GRID Engine runtime is not ready. Run `grid engine install`, then retry `grid host`."
+        );
+    }
+    println!("GRID Engine host — approved isolated containers only · mining off");
+    run_host(cfg, compute).await
 }
 
 async fn run_combined_node(
