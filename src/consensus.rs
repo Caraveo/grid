@@ -12,7 +12,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use crate::blockchain::ChainReplica;
-use crate::chain::MAX_SUPPLY;
+use crate::chain::{COMPUTE_ALLOCATION, MAX_SUPPLY};
 
 const VOTE_DOMAIN: &str = "GRID-VALIDATOR-VOTE-v1";
 pub const MIN_PRODUCTION_VALIDATORS: usize = 4;
@@ -219,7 +219,7 @@ fn check(name: &str, ok: bool, detail: impl Into<String>) -> ReadinessCheck {
 pub fn readiness(config_dir: &Path) -> MainnetReadiness {
     let replica = ChainReplica::load(config_dir).ok().flatten();
     let chain_valid = replica.as_ref().is_some_and(|chain| chain.verify().is_ok());
-    let supply_ok = replica
+    let total_supply_ok = replica
         .as_ref()
         .is_some_and(|chain| (chain.max_supply - MAX_SUPPLY).abs() < f64::EPSILON);
     let recovery_ok = replica
@@ -246,17 +246,25 @@ pub fn readiness(config_dir: &Path) -> MainnetReadiness {
             },
         ),
         check(
-            "supply.compute_allocation",
-            supply_ok,
+            "supply.total_cap",
+            total_supply_ok,
             replica
                 .as_ref()
                 .map(|chain| {
                     format!(
-                        "compute-emission cap is {:.0} GRID; policy is {:.0}",
+                        "total cap is {:.0} GRID; protocol policy is {:.0}",
                         chain.max_supply, MAX_SUPPLY
                     )
                 })
                 .unwrap_or_else(|| "chain unavailable".into()),
+        ),
+        check(
+            "supply.compute_allocation",
+            (COMPUTE_ALLOCATION - 5_000_000_000.0).abs() < f64::EPSILON,
+            format!(
+                "verified-work minting stops at {:.0} GRID independently of treasury",
+                COMPUTE_ALLOCATION
+            ),
         ),
         check(
             "supply.treasury_allocation",
