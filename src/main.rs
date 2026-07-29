@@ -128,18 +128,6 @@ enum Commands {
         id: Option<String>,
         #[arg(long)]
         poll_ms: Option<u64>,
-    },
-
-    /// P2P block replica + Proof-of-Resource miner (never hosts services)
-    Miner {
-        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
-        coordinator: Option<String>,
-        #[arg(long, env = "GRID_NODE_ID")]
-        id: Option<String>,
-        #[arg(long, env = "GRID_NODE_CLASS")]
-        class: Option<String>,
-        #[arg(long)]
-        poll_ms: Option<u64>,
         #[arg(long, default_value = "0.0.0.0:9900")]
         p2p_listen: String,
         #[arg(long = "p2p-connect")]
@@ -817,19 +805,6 @@ async fn main() -> Result<()> {
             coordinator,
             id,
             poll_ms,
-        } => {
-            banner::print_mark();
-            println!();
-            let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
-            std::env::set_var("GRID_CONFIG_DIR", &config_dir);
-            run_mine(cfg).await?;
-        }
-
-        Commands::Miner {
-            coordinator,
-            id,
-            class,
-            poll_ms,
             p2p_listen,
             p2p_connect,
             p2p_no_genesis,
@@ -837,7 +812,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
-            let cfg = load_cfg(&config_dir, coordinator, id, class, None, poll_ms)?;
+            let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_miner_node(
                 cfg,
