@@ -130,6 +130,26 @@ enum Commands {
         poll_ms: Option<u64>,
     },
 
+    /// P2P block replica + Proof-of-Resource miner (never hosts services)
+    Miner {
+        #[arg(long, env = "GRID_COORDINATOR", default_value = DEFAULT_COORDINATOR)]
+        coordinator: Option<String>,
+        #[arg(long, env = "GRID_NODE_ID")]
+        id: Option<String>,
+        #[arg(long, env = "GRID_NODE_CLASS")]
+        class: Option<String>,
+        #[arg(long)]
+        poll_ms: Option<u64>,
+        #[arg(long, default_value = "0.0.0.0:9900")]
+        p2p_listen: String,
+        #[arg(long = "p2p-connect")]
+        p2p_connect: Vec<String>,
+        #[arg(long)]
+        p2p_no_genesis: bool,
+        #[arg(long)]
+        p2p_noise_key_file: Option<PathBuf>,
+    },
+
     /// Manage named computes
     Compute {
         #[command(subcommand)]
@@ -803,6 +823,30 @@ async fn main() -> Result<()> {
             let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_mine(cfg).await?;
+        }
+
+        Commands::Miner {
+            coordinator,
+            id,
+            class,
+            poll_ms,
+            p2p_listen,
+            p2p_connect,
+            p2p_no_genesis,
+            p2p_noise_key_file,
+        } => {
+            banner::print_mark();
+            println!();
+            let cfg = load_cfg(&config_dir, coordinator, id, class, None, poll_ms)?;
+            std::env::set_var("GRID_CONFIG_DIR", &config_dir);
+            run_miner_node(
+                cfg,
+                config_dir.clone(),
+                p2p_listen,
+                p2p_connect,
+                p2p_no_genesis,
+                p2p_noise_key_file,
+            ).await?;
         }
 
         Commands::Compute { action } => match action {
@@ -1854,6 +1898,48 @@ async fn run_engine_host(cfg: NodeConfig, compute: Option<String>) -> Result<()>
     }
     println!("GRID Engine host — approved isolated containers only · mining off");
     run_host(cfg, compute).await
+}
+
+/// Miner role: independently replicate/validate signed blocks over P2P while
+/// doing only PoR work. No container host loop is started here.
+async fn run_miner_node(
+    cfg: NodeConfig,
+    config_dir: PathBuf,
+    listen: String,
+    mut connect: Vec<String>,
+    no_genesis: bool,
+    noise_key_file: Option<PathBuf>,
+) -> Result<()> {
+    if !no_genesis && !connect.iter().any(|peer| peer == DEFAULT_GENESIS_PEER) {
+        connect.insert(0, DEFAULT_GENESIS_PEER.to_string());
+    }
+    let noise_static_key = if let Some(path) = noise_key_file {
+        let raw = std::fs::read(&path)?;
+        raw.as_slice().try_into().map_err(|_| anyhow::anyhow!("P2P Noise key must be exactly 32 bytes"))?
+    } else {
+        let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted P2P miner").await?;
+        grid::passkey::p2p_noise_static_key(&config_dir, &dek)?
+    };
+    let peer = PeerOptions {
+        node_id: cfg.node_id.clone(),
+        name: cfg.name.clone(),
+        class: cfg.class.to_string(),
+        listen,
+        connect,
+        score: 0.0,
+        genesis_url: Some(DEFAULT_GENESIS_URL.to_string()),
+        genesis_pubkey: Some(DEFAULT_GENESIS_PUBKEY.to_string()),
+        gp_id: None,
+        realm: None,
+        pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
+        noise_static_key,
+        config_dir,
+    };
+    println!("GRID MINER includes P2P block verification + PoR mining (host off)");
+    tokio::select! {
+        result = run_peer(peer) => result,
+        result = run_mine(cfg) => result,
+    }
 }
 
 async fn run_combined_node(
