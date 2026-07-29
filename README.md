@@ -30,6 +30,7 @@ coordinator, block producer, and live explorer:
 - [Genesis](https://genesis.grid-compute.com/health) — canonical signed-truth and chain health
 - [Coordinator](https://coordinator.grid-compute.com/v1/status) — proof-of-resource settlement status
 - [v0.2.19 release](https://github.com/Caraveo/grid/releases/tag/v0.2.19) — verified binaries for all supported platforms
+- [Discord](https://discord.gg/nVs7NBCuqZ) — GRID community and operator discussion
 
 This is a **public production pilot**, not a decentralized mainnet. It supports
 running a peer, hosting capacity, and testing the reward flow; it is not a claim that
