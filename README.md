@@ -12,11 +12,30 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![Version](https://img.shields.io/badge/version-0.2.19-blue.svg)](https://github.com/Caraveo/grid/releases)
-[![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
+[![Status](https://img.shields.io/badge/status-Public%20Genesis%20Pilot-orange.svg)](https://explorer.grid-compute.com/)
 
 <p align="center">
   <em>Bitcoin is the Transact Security Layer</em> — GRID meters compute; BTC secures value.
 </p>
+
+---
+
+## Network status — public Genesis pilot
+
+GRID v0.2.19 is published for macOS (Intel and Apple silicon), Linux, and
+Windows. The public network has a signed Genesis chain, encrypted P2P peer,
+coordinator, block producer, and live explorer:
+
+- [Explorer](https://explorer.grid-compute.com/) — signed blocks, coordinator, and privacy-rounded node telemetry
+- [Genesis](https://genesis.grid-compute.com/health) — canonical signed-truth and chain health
+- [Coordinator](https://coordinator.grid-compute.com/v1/status) — proof-of-resource settlement status
+- [v0.2.19 release](https://github.com/Caraveo/grid/releases/tag/v0.2.19) — verified binaries for all supported platforms
+
+This is a **public production pilot**, not a decentralized mainnet. It supports
+running a peer, hosting capacity, and testing the reward flow; it is not a claim that
+validator quorum, treasury governance, or a token market are complete. See
+[Decentralized mainnet gate](#decentralized-mainnet-gate) before describing
+GRID as mainnet-ready.
 
 ---
 
@@ -25,20 +44,24 @@
 ### macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash
 brew install lima
 limactl start --name=grid-containerd template:default
 nerdctl info
 grid init --name my-node --class S
+grid auth keyphrase
+grid node
 ```
 
 ### Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash
 # Install rootless containerd + nerdctl using your distribution or nerdctl release.
 nerdctl info
 grid init --name my-node --class S
+grid auth keyphrase
+grid node
 ```
 
 ### Windows (WSL2)
@@ -58,7 +81,7 @@ jobs.
 ### One-liner (`curl`) — recommended
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash
 ```
 
 Then open a **new terminal** (or `hash -r`) and verify:
@@ -72,16 +95,18 @@ grid auth --help      # must list passkey / combo / …
 
 ```bash
 # Replace any existing binary (including legacy CLIs also named `grid`)
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --force
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --force
 
-# Always cargo-build from git
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --from-source
+# Always cargo-build from a clone
+git clone https://github.com/Caraveo/grid.git
+cd grid
+./scripts/install.sh --from-source --force
 
 # Prefer /usr/local/bin (may prompt for sudo)
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --system --force
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --system --force
 
 # Custom directory
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --prefix="$HOME/bin"
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --prefix="$HOME/bin"
 ```
 
 ### From a git clone
@@ -97,26 +122,26 @@ make install-system          # → /usr/local/bin/grid
 
 ### What the installer does
 
-1. Tries a **GitHub Release** prebuilt (`grid-<os>-<arch>`) when available  
-2. Otherwise installs **Rust** (if needed) and **`cargo build --release`**  
-3. Installs to **`~/.local/bin/grid`** by default (or `--prefix` / `--system`)  
-4. **Detects Phase 1** via `grid auth` — refuses/replaces legacy binaries that also used the name `grid`  
-5. Backs up non-Phase-1 copies as `*.legacy.bak`  
-6. Ensures `~/.local/bin` is on **PATH** (appends to `~/.zshrc` / `~/.bashrc` when safe)  
-7. Writes `~/.grid/install-info.txt` and prints next steps  
+1. Downloads the matching signed GRID release binary (`grid-<os>-<arch>`)
+2. Verifies the pinned release-signing key, signature, and SHA-256 checksum
+3. Installs to **`~/.local/bin/grid`** by default (or `--prefix` / `--system`)
+4. **Detects Phase 1** via `grid auth` — refuses/replaces legacy binaries that also used the name `grid`
+5. Backs up non-Phase-1 copies as `*.legacy.bak`
+6. Ensures `~/.local/bin` is on **PATH** (appends to `~/.zshrc` / `~/.bashrc` when safe)
+7. Writes `~/.grid/install-info.txt` and prints next steps
 
 If `grid auth` is “unrecognized”, you’re still on a **legacy** binary:
 
 ```bash
 which -a grid
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --force --system
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --force --system
 hash -r && grid auth --help
 ```
 
 ### Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash -s -- --uninstall
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash -s -- --uninstall
 # or from a clone: make uninstall
 ```
 
@@ -137,7 +162,22 @@ Requires [Rust](https://rustup.rs) only when building from source (the installer
 ```bash
 # once
 grid init --name garage --class S
-grid auth                 # passkey default (or password / combo / …)
+grid auth keyphrase       # or: passkey | password | combo
+
+# Public all-in-one node: encrypted P2P + host + mine
+grid node
+
+# Peer-only node: verifies/replicates the chain without mining
+grid peer --with-bench
+```
+
+`grid node` automatically dials the canonical Genesis peer and listens on
+`0.0.0.0:9900`. Do not run a separate `grid peer` on the same machine unless
+you use a different `--listen` / `--p2p-listen` port.
+
+For a local development coordinator, use the separate commands below:
+
+```bash
 
 # terminal 1 — coordinator (auto mine PoR + demo host jobs)
 grid coord --bind 0.0.0.0:8787
@@ -471,10 +511,11 @@ MIT (code). Docs CC-BY-4.0 where noted.
 ---
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Caraveo/grid/master/scripts/install.sh | bash
-grid coord &
+curl -fsSL https://grid-compute.com/downloads/install.sh | bash
+grid init --name my-node --class S
+grid auth keyphrase
 grid node
-grid submit --wait
+grid peer --with-bench  # use this instead of `grid node` for P2P-only operation
 ```
 
 *Solana devnet is for testing only. Mainnet requires audit and multisig. Bitcoin secures the exit.*
