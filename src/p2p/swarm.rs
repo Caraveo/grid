@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -202,6 +202,139 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
     }
 }
 
+/// Open one private, capability-gated TCP stream through an existing GRID
+/// Noise protocol session. The local listener is loopback-only and handles one
+/// client connection; no public socket or DNS entry is created.
+pub async fn run_private_tunnel_client(
+    opts: PeerOptions,
+    peer: &str,
+    service: &str,
+    capability: &str,
+    client_pubkey: &str,
+    client_signature: &str,
+    local_bind: &str,
+) -> Result<()> {
+    let bind: SocketAddr = local_bind
+        .parse()
+        .with_context(|| format!("bad private tunnel bind {local_bind}"))?;
+    if !bind.ip().is_loopback() {
+        return Err(anyhow!("private tunnel client must bind to loopback"));
+    }
+    let listener = TcpListener::bind(bind).await?;
+    println!("GRID private tunnel listening on http://{local_bind}");
+    println!("  service  grid://service/{service}");
+    println!("  peer     {peer}");
+    println!("  accepts  one local connection per capability");
+    let (local, _) = listener.accept().await?;
+
+    let stream = TcpStream::connect(normalize_addr(peer))
+        .await
+        .with_context(|| format!("connect private tunnel peer {peer}"))?;
+    let (stream, transport) = noise_handshake(stream, false, &opts.noise_static_key).await?;
+    let transport = Arc::new(tokio::sync::Mutex::new(transport));
+    let (mut remote_reader, mut remote_writer) = stream.into_split();
+    write_msg(
+        &mut remote_writer,
+        &transport,
+        &Message::hello(
+            &opts.node_id,
+            &opts.name,
+            "",
+            &opts.class,
+            opts.score,
+            None,
+            None,
+            opts.pubkey_hex.clone(),
+        ),
+    )
+    .await?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    write_msg(
+        &mut remote_writer,
+        &transport,
+        &Message::TunnelOpen {
+            service: service.into(),
+            capability: capability.into(),
+            client_pubkey: client_pubkey.into(),
+            client_signature: client_signature.into(),
+            request_id: request_id.clone(),
+        },
+    )
+    .await?;
+    loop {
+        match read_msg(&mut remote_reader, &transport).await? {
+            Message::TunnelResult {
+                request_id: id,
+                accepted,
+                reason,
+            } if id == request_id => {
+                if !accepted {
+                    bail!(
+                        "private tunnel refused: {}",
+                        reason.unwrap_or_else(|| "policy".into())
+                    );
+                }
+                break;
+            }
+            Message::Ping { nonce, ts_ms } => {
+                write_msg(
+                    &mut remote_writer,
+                    &transport,
+                    &Message::Pong {
+                        nonce,
+                        echo_ts_ms: ts_ms,
+                    },
+                )
+                .await?;
+            }
+            _ => {}
+        }
+    }
+
+    let (mut local_reader, mut local_writer) = local.into_split();
+    let mut local_buffer = vec![0u8; 16 * 1024];
+    loop {
+        tokio::select! {
+            read = local_reader.read(&mut local_buffer) => {
+                let size = read?;
+                if size == 0 {
+                    write_msg(
+                        &mut remote_writer,
+                        &transport,
+                        &Message::TunnelClose { request_id: request_id.clone() },
+                    ).await?;
+                    break;
+                }
+                write_msg(
+                    &mut remote_writer,
+                    &transport,
+                    &Message::TunnelData {
+                        request_id: request_id.clone(),
+                        data: local_buffer[..size].to_vec(),
+                    },
+                ).await?;
+            }
+            message = read_msg(&mut remote_reader, &transport) => {
+                match message? {
+                    Message::TunnelData { request_id: id, data } if id == request_id => {
+                        local_writer.write_all(&data).await?;
+                    }
+                    Message::TunnelClose { request_id: id } if id == request_id => break,
+                    Message::Ping { nonce, ts_ms } => {
+                        write_msg(
+                            &mut remote_writer,
+                            &transport,
+                            &Message::Pong { nonce, echo_ts_ms: ts_ms },
+                        ).await?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn dial_and_session(target: String, opts: PeerOptions, state: Shared) -> Result<()> {
     {
         let s = state.lock();
@@ -301,6 +434,7 @@ async fn handle_connection(
     let mut reader = reader;
     let dir = if inbound { "←" } else { "→" };
     let mut peer_key = normalize_addr(&remote_label);
+    let mut tunnel_writers: HashMap<String, tokio::net::tcp::OwnedWriteHalf> = HashMap::new();
 
     loop {
         let msg = match read_msg(&mut reader, &transport).await {
@@ -399,20 +533,77 @@ async fn handle_connection(
                 }
             }
             Message::TunnelOpen {
-                service: _,
-                capability: _,
+                service,
+                capability,
+                client_pubkey,
+                client_signature,
                 request_id,
             } => {
-                // The stream relay is intentionally fail-closed until the Engine
-                // host has an active private-service capability registry. A peer
-                // can never turn this control message into a public port forward.
+                let runtime = crate::engine::service_status(&opts.config_dir, &service).ok();
+                let eligible = runtime
+                    .as_ref()
+                    .is_some_and(|state| state.state == "running-private" && !state.public_exposure);
+                if !eligible {
+                    tx.send(Message::TunnelResult {
+                        request_id,
+                        accepted: false,
+                        reason: Some("private Engine service is not running".into()),
+                    })
+                    .await
+                    .ok();
+                    continue;
+                }
+                let runtime = runtime.expect("eligible runtime");
+                let local = TcpStream::connect(("127.0.0.1", runtime.loopback_port)).await;
+                if local.is_err()
+                    || !crate::engine::consume_private_capability(
+                        &opts.config_dir,
+                        &service,
+                        &capability,
+                        &client_pubkey,
+                        &client_signature,
+                    )
+                {
+                    tx.send(Message::TunnelResult {
+                        request_id,
+                        accepted: false,
+                        reason: Some("invalid capability or unavailable service".into()),
+                    })
+                    .await
+                    .ok();
+                    continue;
+                }
+                let (mut local_reader, local_writer) = local.expect("checked local stream").into_split();
+                tunnel_writers.insert(request_id.clone(), local_writer);
                 tx.send(Message::TunnelResult {
-                    request_id,
-                    accepted: false,
-                    reason: Some("private Engine tunnel is not active on this peer".into()),
+                    request_id: request_id.clone(),
+                    accepted: true,
+                    reason: None,
                 })
                 .await
                 .ok();
+                let tunnel_tx = tx.clone();
+                tokio::spawn(async move {
+                    let mut buffer = vec![0u8; 16 * 1024];
+                    loop {
+                        match local_reader.read(&mut buffer).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(size) => {
+                                if tunnel_tx
+                                    .send(Message::TunnelData {
+                                        request_id: request_id.clone(),
+                                        data: buffer[..size].to_vec(),
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    let _ = tunnel_tx.send(Message::TunnelClose { request_id }).await;
+                });
             }
             Message::TunnelResult {
                 request_id,
@@ -422,6 +613,21 @@ async fn handle_connection(
                 if !accepted {
                     debug!("private tunnel {request_id} refused: {}", reason.unwrap_or_else(|| "policy".into()));
                 }
+            }
+            Message::TunnelData { request_id, data } => {
+                if data.len() > 16 * 1024 {
+                    warn!("private tunnel frame too large");
+                    tunnel_writers.remove(&request_id);
+                } else if let Some(writer) = tunnel_writers.get_mut(&request_id) {
+                    if writer.write_all(&data).await.is_err() {
+                        tunnel_writers.remove(&request_id);
+                    }
+                } else {
+                    debug!("ignored tunnel data for unknown request {request_id}");
+                }
+            }
+            Message::TunnelClose { request_id } => {
+                tunnel_writers.remove(&request_id);
             }
             Message::Peers { addrs } => {
                 let mut s = state.lock();
@@ -778,4 +984,40 @@ async fn refresh_truth(url: &str, expected_pubkey: Option<&str>, state: &Shared)
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tunnel_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn private_tunnel_client_rejects_non_loopback_bind() {
+        let options = PeerOptions {
+            node_id: "node-test".into(),
+            name: "test".into(),
+            class: "S".into(),
+            listen: String::new(),
+            connect: Vec::new(),
+            score: 0.0,
+            genesis_url: None,
+            genesis_pubkey: None,
+            gp_id: None,
+            realm: None,
+            pubkey_hex: None,
+            noise_static_key: [1u8; 32],
+            config_dir: PathBuf::new(),
+        };
+        let error = run_private_tunnel_client(
+            options,
+            "127.0.0.1:9",
+            "site",
+            &"00".repeat(32),
+            &"11".repeat(32),
+            &"22".repeat(64),
+            "0.0.0.0:41784",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("must bind to loopback"));
+    }
 }

@@ -68,6 +68,8 @@ pub enum Message {
     TunnelOpen {
         service: String,
         capability: String,
+        client_pubkey: String,
+        client_signature: String,
         request_id: String,
     },
     /// The host either accepts a capability-gated stream or fails closed.
@@ -75,6 +77,14 @@ pub enum Message {
         request_id: String,
         accepted: bool,
         reason: Option<String>,
+    },
+    /// Encrypted tunnel payload carried inside the existing Noise session.
+    TunnelData {
+        request_id: String,
+        data: Vec<u8>,
+    },
+    TunnelClose {
+        request_id: String,
     },
 }
 

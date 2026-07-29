@@ -21,7 +21,7 @@ use grid::config::{NodeClass, NodeConfig};
 use grid::coord::{run_coordinator_with, CoordOptions, CoordinatorClient};
 use grid::earn::EarnLedger;
 use grid::node::{run_host, run_mine, run_node};
-use grid::p2p::{run_peer, PeerOptions};
+use grid::p2p::{run_peer, run_private_tunnel_client, PeerOptions};
 use grid::resources;
 use grid::tsl::TransactSecurityLayer;
 
@@ -528,6 +528,43 @@ enum EngineServiceCmd {
         #[arg(long)]
         repo: String,
     },
+    /// Deploy the validated Caddy service on loopback with a private GRID locator
+    Deploy { path: PathBuf },
+    /// Show the signed local runtime receipt
+    Status { name: String },
+    /// Read container logs
+    Logs {
+        name: String,
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Stop Caddy and immediately unmount its encrypted volume
+    Stop { name: String },
+    /// Permanently delete stopped service state and encrypted content
+    Destroy {
+        name: String,
+        /// Confirm permanent deletion
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Reveal the private capability for delivery through an assigned GRID session
+    Capability {
+        name: String,
+        /// Operator public key of the client allowed to consume this capability
+        #[arg(long)]
+        client_pubkey: String,
+    },
+    /// Open one loopback client stream to a private Engine service over GRID P2P
+    Connect {
+        #[arg(long)]
+        peer: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, env = "GRID_ENGINE_CAPABILITY")]
+        capability: Option<String>,
+        #[arg(long, default_value = "127.0.0.1:41784")]
+        bind: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -987,7 +1024,7 @@ async fn main() -> Result<()> {
 
         Commands::Engine { action } => match action {
             EngineCmd::Doctor => grid::engine::doctor(),
-            EngineCmd::Install => grid::engine::install()?,
+            EngineCmd::Install => grid::engine::install(&config_dir)?,
             EngineCmd::Start { coordinator, compute, id, poll_ms } => {
                 banner::print_mark();
                 println!();
@@ -1032,6 +1069,111 @@ async fn main() -> Result<()> {
                     println!("  add this public key as a read-only deploy key on {}:", key.repository);
                     println!("  {}", key.public_key);
                     println!("  private key  vault-wrapped; never mounted into a container");
+                }
+                EngineServiceCmd::Deploy { path } => {
+                    let runtime = grid::engine::deploy_web_service(&config_dir, &path).await?;
+                    println!("✓ Private Engine service deployed: {}", runtime.service);
+                    println!("  locator      {}", runtime.locator);
+                    println!("  commit       {}", runtime.commit);
+                    println!("  exposure     private GRID sessions only");
+                    println!("  host bind    loopback only");
+                }
+                EngineServiceCmd::Status { name } => {
+                    let runtime = grid::engine::service_status(&config_dir, &name)?;
+                    println!("Engine service: {}", runtime.service);
+                    println!("  state        {}", runtime.state);
+                    println!("  locator      {}", runtime.locator);
+                    println!("  commit       {}", runtime.commit);
+                    println!("  image        {}", runtime.image_digest);
+                    println!("  public       {}", runtime.public_exposure);
+                    println!("  receipt      {}…", &runtime.receipt_signature[..16.min(runtime.receipt_signature.len())]);
+                }
+                EngineServiceCmd::Logs { name, follow } => {
+                    grid::engine::service_logs(&config_dir, &name, follow)?;
+                }
+                EngineServiceCmd::Stop { name } => {
+                    let runtime = grid::engine::stop_web_service(&config_dir, &name).await?;
+                    println!("✓ Engine service stopped: {}", runtime.service);
+                    println!("  encrypted volume unmounted");
+                }
+                EngineServiceCmd::Destroy { name, yes } => {
+                    if !yes {
+                        anyhow::bail!(
+                            "destroy permanently deletes encrypted service content; repeat with --yes"
+                        );
+                    }
+                    grid::engine::destroy_web_service(&config_dir, &name).await?;
+                    println!("✓ Engine service destroyed: {name}");
+                    println!("  encrypted content and local capability state removed");
+                }
+                EngineServiceCmd::Capability {
+                    name,
+                    client_pubkey,
+                } => {
+                    let capability =
+                        grid::engine::reveal_private_capability(
+                            &config_dir,
+                            &name,
+                            &client_pubkey,
+                        )
+                        .await?;
+                    println!("{capability}");
+                    eprintln!("Sensitive: deliver only through an authenticated assigned GRID session.");
+                }
+                EngineServiceCmd::Connect {
+                    peer,
+                    name,
+                    capability,
+                    bind,
+                } => {
+                    let capability = match capability {
+                        Some(value) => value,
+                        None => rpassword::prompt_password("Private GRID capability: ")?,
+                    };
+                    let cfg = NodeConfig::load(&NodeConfig::path_in(&config_dir))?;
+                    let dek = grid::passkey::require_unlocked(
+                        &config_dir,
+                        "open private Engine tunnel",
+                    )
+                    .await?;
+                    let options = PeerOptions {
+                        node_id: cfg.node_id.clone(),
+                        name: cfg.name.clone(),
+                        class: cfg.class.to_string(),
+                        listen: String::new(),
+                        connect: Vec::new(),
+                        score: 0.0,
+                        genesis_url: None,
+                        genesis_pubkey: None,
+                        gp_id: None,
+                        realm: None,
+                        pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
+                        noise_static_key: grid::passkey::p2p_noise_static_key(
+                            &config_dir,
+                            &dek,
+                        )?,
+                        config_dir: config_dir.clone(),
+                    };
+                    let client_pubkey =
+                        grid::passkey::operator_pubkey_hex(&config_dir)?;
+                    let client_signature = grid::passkey::sign_operator(
+                        &config_dir,
+                        &dek,
+                        &grid::engine::tunnel_authorization_message(
+                            &name,
+                            capability.trim(),
+                        ),
+                    )?;
+                    run_private_tunnel_client(
+                        options,
+                        &peer,
+                        &name,
+                        capability.trim(),
+                        &client_pubkey,
+                        &client_signature,
+                        &bind,
+                    )
+                    .await?;
                 }
             },
             EngineCmd::Init { path, name } => {

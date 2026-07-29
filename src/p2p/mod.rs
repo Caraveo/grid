@@ -3,4 +3,4 @@
 mod protocol;
 mod swarm;
 
-pub use swarm::{run_peer, PeerOptions};
+pub use swarm::{run_peer, run_private_tunnel_client, PeerOptions};

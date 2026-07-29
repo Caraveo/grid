@@ -163,7 +163,7 @@ Verified work may be eligible for a coordinator-controlled pilot settlement. Upt
 
 ## GRID Engine and hosting
 
-GRID Engine prepares the runtime boundary for voluntary compute hosts. It is intentionally restrictive: containers must not receive the GRID vault, node keys, host paths, privileged capabilities, the container socket, or arbitrary host ports.
+GRID Engine prepares the runtime boundary for voluntary compute hosts. It is intentionally restrictive: containers must not receive the GRID vault, node keys, arbitrary host paths, broad capability sets, the container socket, or arbitrary host ports.
 
 ### Runtime preparation
 
@@ -183,7 +183,17 @@ Supported runtime approach:
 
 `grid engine install` checks and installs the supported runtime prerequisites for the current platform. It may invoke the platform package manager or WSL setup, so read its output and approve only on machines you administer.
 
-### Service and encrypted-volume scaffolding
+On macOS, the dedicated `grid-containerd` VM receives one writable host mount:
+the selected GRID config directory's `engine/` subtree. The parent config
+directory, wallet, vault, and keys are not mounted into the VM. Container
+processes receive only the individual service checkout as a read-only mount.
+Encrypted ciphertext persists in the shared Engine subtree; decrypted
+gocryptfs mountpoints exist only on the VM-native filesystem. Ubuntu performs
+the FUSE mount with guest administrator authority, then forces file ownership
+to the rootless Engine user. The vault-wrapped volume key is sent through
+standard input for the mount and immediately zeroized.
+
+### Private Caddy service lifecycle
 
 ```bash
 # Create a reviewable P2P Engine manifest; it does not start a workload.
@@ -199,11 +209,39 @@ grid engine service check site.yaml
 
 # For one private Git repository, generate a vault-wrapped deploy key.
 grid engine service key-create --name my-site --repo git@github.com:OWNER/REPO.git
+
+# Deploy: encrypted mount → host-side Git fetch → isolated Caddy.
+grid engine service deploy site.yaml
+grid engine service status my-site
+grid engine service logs my-site
+
+# On the client, copy the `public` value.
+grid auth status
+
+# On the host, issue a one-time capability bound to that client identity.
+grid engine service capability my-site \
+  --client-pubkey CLIENT_OPERATOR_PUBLIC_KEY
+
+# On an assigned client, open one loopback-only stream over encrypted GRID P2P.
+grid engine service connect \
+  --peer HOST:9900 \
+  --name my-site \
+  --bind 127.0.0.1:41784
+
+# Stop Caddy and immediately unmount encrypted storage.
+grid engine service stop my-site
+
+# Explicit, permanent deletion of encrypted service content.
+grid engine service destroy my-site --yes
 ```
 
-The current Engine code creates reviewable manifests, runtime checks, encrypted-volume key scaffolding, and one-per-repository deploy-key scaffolding. It **does not yet mount encrypted volumes, clone/deploy a repository, run Caddy, or expose a tunnel.** Those steps remain deliberately gated behind the host-execution audit work.
+The capability is entered through a hidden prompt unless
+`GRID_ENGINE_CAPABILITY` is set. It is scoped to one service and consumed when
+the host accepts the stream. The client and container are both loopback-only:
+Engine does not create a DNS record, public URL, router rule, or wildcard
+listener.
 
-### Planned first workload profile
+### First workload profile
 
 ```text
 Git repository → host-side authenticated fetch → Caddy container → GRID tunnel
@@ -211,7 +249,16 @@ Git repository → host-side authenticated fetch → Caddy container → GRID tu
                          └── vault/key material never enters container ──┘
 ```
 
-The first profile allows only an approved Caddy image, a Git source, the fixed service port `41783`, and `grid-tunnel` exposure. Arbitrary images, direct WAN/LAN host exposure, host networking, host mounts, and privileged container settings are rejected by design.
+The first profile allows only the approved `caddy:2-alpine` image, a Git
+source, the fixed service port `41783`, and `grid-tunnel` exposure. The Git
+checkout runs on the host inside a gocryptfs mount. Caddy receives a recursive
+read-only bind of the checkout and never receives the GRID vault, deploy key,
+encrypted-volume key, host root, or containerd socket. Runtime receipts include
+the deployed commit and are signed by the operator key. Arbitrary images,
+direct WAN/LAN exposure, host networking, and privileged settings are rejected.
+All Linux capabilities are dropped except the official Caddy image's
+`NET_BIND_SERVICE` file capability; `no-new-privileges` remains enabled and
+Engine still binds only its fixed high port to host loopback.
 
 ## Security model and limits
 
@@ -223,7 +270,7 @@ The first profile allows only an approved Caddy image, a Git source, the fixed s
 - Separate operator-vault and Genesis-authority key paths
 - Signed, replay-resistant registry heartbeats with opt-in coarse geography
 - P2P block synchronization followed by local signed-chain verification
-- Container runtime policy scaffolding: read-only intent, capability restrictions, CPU/memory limits, and a narrow service contract
+- Private Engine Caddy lifecycle with gocryptfs storage, per-repository deploy keys, loopback-only networking, one-time P2P capabilities, and signed runtime receipts
 
 ### Important limits
 

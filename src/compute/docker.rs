@@ -33,8 +33,38 @@ fn nerdctl_bin() -> String {
         .unwrap_or_else(|| DEFAULT_NERDCTL.into())
 }
 
+fn use_lima_nerdctl() -> bool {
+    cfg!(target_os = "macos")
+        && std::env::var("GRID_NERDCTL_BIN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+}
+
+fn nerdctl_command() -> Command {
+    let configured = nerdctl_bin();
+    if use_lima_nerdctl() {
+        let mut command = Command::new("limactl");
+        command.args(["shell", "grid-containerd", "nerdctl"]);
+        command
+    } else {
+        Command::new(configured)
+    }
+}
+
+fn nerdctl_async_command() -> AsyncCommand {
+    let configured = nerdctl_bin();
+    if use_lima_nerdctl() {
+        let mut command = AsyncCommand::new("limactl");
+        command.args(["shell", "grid-containerd", "nerdctl"]);
+        command
+    } else {
+        AsyncCommand::new(configured)
+    }
+}
+
 pub async fn containerd_available() -> bool {
-    AsyncCommand::new(nerdctl_bin())
+    nerdctl_async_command()
         .args(["info"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -47,14 +77,14 @@ pub async fn containerd_available() -> bool {
 /// Register capacity: pull allowlisted image. Jobs are one-shot isolated runs
 /// (no long-lived host-mounted containers).
 pub async fn ensure_capacity(m: &ComputeManifest) -> Result<Vec<String>> {
-    let pull = AsyncCommand::new(nerdctl_bin())
+    let pull = nerdctl_async_command()
         .args(["pull", &m.image])
         .output()
         .await
         .context("containerd/nerdctl pull")?;
     if !pull.status.success() {
         // Image may already be local
-        let inspect = AsyncCommand::new(nerdctl_bin())
+        let inspect = nerdctl_async_command()
             .args(["image", "inspect", &m.image])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -74,17 +104,17 @@ pub async fn ensure_capacity(m: &ComputeManifest) -> Result<Vec<String>> {
 }
 
 pub fn stop_container(id: &str) -> Result<()> {
-    let _ = Command::new(nerdctl_bin()).args(["stop", id]).status();
+    let _ = nerdctl_command().args(["stop", id]).status();
     Ok(())
 }
 
 pub fn rm_container(id: &str) -> Result<()> {
-    let _ = Command::new(nerdctl_bin()).args(["rm", "-f", id]).status();
+    let _ = nerdctl_command().args(["rm", "-f", id]).status();
     Ok(())
 }
 
 pub fn logs(id: &str, follow: bool) -> Result<()> {
-    let mut cmd = Command::new(nerdctl_bin());
+    let mut cmd = nerdctl_command();
     cmd.arg("logs");
     if follow {
         cmd.arg("-f");
@@ -95,6 +125,113 @@ pub fn logs(id: &str, follow: bool) -> Result<()> {
         bail!("containerd/nerdctl logs failed");
     }
     Ok(())
+}
+
+/// Start the one approved long-lived Engine workload. The source tree is
+/// recursively read-only inside Caddy, the service binds to host loopback only,
+/// and no vault/key/runtime socket is mounted.
+pub async fn run_caddy_service(
+    name: &str,
+    image: &str,
+    source: &std::path::Path,
+    port: u16,
+) -> Result<(String, String)> {
+    if image != "caddy:2-alpine" {
+        bail!("Engine phase 1 only permits caddy:2-alpine");
+    }
+    super::tunnel::validate_container_port(port)?;
+    let cname = format!("grid-engine-{name}");
+    let pull = nerdctl_async_command()
+        .args(["pull", image])
+        .output()
+        .await
+        .context("pull approved Caddy image")?;
+    if !pull.status.success() {
+        bail!("cannot pull {image}: {}", String::from_utf8_lossy(&pull.stderr));
+    }
+    let inspect = nerdctl_async_command()
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{index .RepoDigests 0}}",
+            image,
+        ])
+        .output()
+        .await
+        .context("resolve approved Caddy image digest")?;
+    if !inspect.status.success() {
+        bail!("cannot resolve immutable digest for {image}");
+    }
+    let image_digest = String::from_utf8(inspect.stdout)?.trim().to_string();
+    let digest_hex = image_digest
+        .strip_prefix("caddy@sha256:")
+        .ok_or_else(|| anyhow::anyhow!("container runtime returned an unexpected Caddy digest"))?;
+    if digest_hex.len() != 64 || !digest_hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("container runtime returned an invalid Caddy sha256 digest");
+    }
+    let _ = nerdctl_command()
+        .args(["rm", "-f", &cname])
+        .status();
+    let source = source
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", source.display()))?;
+    let args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        cname.clone(),
+        "--label".to_string(),
+        format!("grid.engine.service={name}"),
+        "--read-only".to_string(),
+        "--tmpfs".to_string(),
+        "/tmp:rw,noexec,nosuid,size=32m".to_string(),
+        "--cap-drop".to_string(),
+        "ALL".to_string(),
+        // The official Caddy image marks its binary with this file capability.
+        // Linux refuses to exec it if the capability is absent from the bounding
+        // set, even though Engine serves only on a high unprivileged port.
+        "--cap-add".to_string(),
+        "NET_BIND_SERVICE".to_string(),
+        "--security-opt".to_string(),
+        "no-new-privileges".to_string(),
+        "--pids-limit".to_string(),
+        "128".to_string(),
+        "--memory".to_string(),
+        "512m".to_string(),
+        "--cpus".to_string(),
+        "1".to_string(),
+        "--user".to_string(),
+        "65534:65534".to_string(),
+        "--network".to_string(),
+        "bridge".to_string(),
+        "--mount".to_string(),
+        format!(
+            "type=bind,source={},target=/srv,readonly,bind-propagation=rprivate",
+            source.display()
+        ),
+        "--publish".to_string(),
+        format!("127.0.0.1:{port}:{port}"),
+        image_digest.clone(),
+        "caddy".to_string(),
+        "file-server".to_string(),
+        "--root".to_string(),
+        "/srv".to_string(),
+        "--listen".to_string(),
+        format!(":{port}"),
+    ];
+    let output = nerdctl_async_command()
+        .args(&args)
+        .output()
+        .await
+        .context("start isolated Caddy service")?;
+    if !output.status.success() {
+        bail!(
+            "Caddy service failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok((cname, image_digest))
 }
 
 /// One-shot isolated job container (host path).
@@ -134,7 +271,7 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
         args.push(c.clone());
     }
 
-    let child = AsyncCommand::new(nerdctl_bin())
+    let child = nerdctl_async_command()
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -145,13 +282,13 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
-            let _ = Command::new(nerdctl_bin())
+            let _ = nerdctl_command()
                 .args(["rm", "-f", &cname])
                 .status();
             bail!("containerd/nerdctl wait: {e}");
         }
         Err(_) => {
-            let _ = Command::new(nerdctl_bin())
+            let _ = nerdctl_command()
                 .args(["rm", "-f", &cname])
                 .status();
             return Ok((
