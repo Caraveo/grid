@@ -482,6 +482,16 @@ enum EngineCmd {
         #[arg(long)]
         poll_ms: Option<u64>,
     },
+    /// Prepare and inspect per-service encrypted storage; never exposes vault keys to containers
+    Volume {
+        #[command(subcommand)]
+        action: EngineVolumeCmd,
+    },
+    /// Create and validate narrow Git-backed Caddy service manifests
+    Service {
+        #[command(subcommand)]
+        action: EngineServiceCmd,
+    },
     /// Write a reviewable GRID Engine YAML manifest without overwriting files
     Init {
         #[arg(default_value = "grid-engine.yaml")]
@@ -489,6 +499,28 @@ enum EngineCmd {
         #[arg(long, default_value = "grid-node")]
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum EngineVolumeCmd {
+    /// Generate and vault-wrap a unique key for an encrypted service volume
+    Prepare { name: String },
+    /// Show volume state without revealing any key material
+    Status { name: String },
+}
+
+#[derive(Subcommand)]
+enum EngineServiceCmd {
+    /// Write a tunnel-only Caddy + Git service request
+    InitWeb {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        repo: String,
+    },
+    /// Validate a service request without starting it
+    Check { path: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -956,6 +988,38 @@ async fn main() -> Result<()> {
                 std::env::set_var("GRID_CONFIG_DIR", &config_dir);
                 run_engine_host(cfg, compute).await?;
             }
+            EngineCmd::Volume { action } => match action {
+                EngineVolumeCmd::Prepare { name } => {
+                    let volume = grid::engine::prepare_volume(&config_dir, &name).await?;
+                    println!("✓ Engine volume prepared: {}", volume.name);
+                    println!("  key          vault-wrapped (not mounted into containers)");
+                    println!("  backend      {}", volume.backend);
+                    println!("  next         encrypted mount backend must be installed before attach");
+                }
+                EngineVolumeCmd::Status { name } => {
+                    let volume = grid::engine::volume_status(&config_dir, &name)?;
+                    println!("Engine volume: {}", volume.name);
+                    println!("  backend      {}", volume.backend);
+                    println!("  encrypted    {}", volume.encrypted_path);
+                    println!("  mount        {}", volume.mount_path);
+                    println!("  key          vault-wrapped; never printed");
+                }
+            },
+            EngineCmd::Service { action } => match action {
+                EngineServiceCmd::InitWeb { path, name, repo } => {
+                    grid::engine::scaffold_web_service(&path, &name, &repo)?;
+                    println!("✓ Caddy web-service request written: {}", path.display());
+                    println!("  exposure     GRID tunnel only (no direct host port)");
+                    println!("  next         grid engine service check {}", path.display());
+                }
+                EngineServiceCmd::Check { path } => {
+                    let service = grid::engine::load_web_service(&path)?;
+                    println!("✓ Valid service request: {}", service.metadata.name);
+                    println!("  image        {} (private registry promotion pins the digest)", service.spec.image);
+                    println!("  git          {}#{}", service.spec.git.repository, service.spec.git.branch);
+                    println!("  exposure     GRID tunnel only");
+                }
+            },
             EngineCmd::Init { path, name } => {
                 grid::engine::scaffold(&path, &name)?;
                 println!("✓ GRID Engine manifest written: {}", path.display());
