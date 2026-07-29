@@ -556,4 +556,24 @@ mod tests {
             .verify()
             .unwrap();
     }
+
+    #[test]
+    fn replica_rejects_tampered_miner_settlement_allocation() {
+        let scores = vec![NodeScore {
+            node_id: "miner-a".into(),
+            cluster_id: "cluster-a".into(),
+            score: 10.0,
+            class_s: true,
+        }];
+        let mut settlement = Settlement::from_scores(
+            "job-1".into(),
+            "mine".into(),
+            "a".repeat(64),
+            "b".repeat(64),
+            100.0,
+            &scores,
+        );
+        settlement.allocations[0].amount = 101.0;
+        assert!(settlement.verify().is_err());
+    }
 }

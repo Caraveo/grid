@@ -157,7 +157,7 @@ Requires [Rust](https://rustup.rs) only when building from source (the installer
 | Track | Command | What | Earn |
 |-------|---------|------|------|
 | **Host** | `grid host` | Pull useful **container** jobs, serve isolated | **Higher** |
-| **Mine** | `grid mine` | PoR / transactional-security work (`blake3_work`) | **Slower** |
+| **Mine** | `grid mine` | P2P replica + PoR / transactional-security work (`blake3_work`) | **Slower** |
 | **All-in-one** | `grid node` | P2P peer + host + mine on one box | mixed |
 
 ```bash
@@ -167,6 +167,9 @@ grid auth keyphrase       # or: passkey | password | combo
 
 # Public all-in-one node: encrypted P2P + host + mine
 grid node
+
+# Miner-only node: encrypted P2P block replication + PoR mining; no hosting
+grid mine
 
 # Peer-only node: verifies/replicates the chain without mining
 grid peer --with-bench
@@ -187,8 +190,8 @@ grid coord --bind 0.0.0.0:8787
 grid launch garage --public          # default public; use --private for fabric-only
 grid host                            # pull container_work · higher earn
 
-# terminal 3 — optional MINE security work
-grid mine                            # blake3_work · slower earn
+# terminal 3 — optional P2P MINE security work (no service hosting)
+grid mine                            # replicate/verify blocks + blake3_work · slower earn
 
 # inspect
 grid compute list
@@ -346,6 +349,9 @@ grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
 # Peer-only node — verifies/replicates the chain without mining
 grid peer --with-bench
 
+# Miner-only — encrypted P2P block replica + mine; no service hosting
+grid mine
+
 # All-in-one node — encrypted P2P + host + mine; Genesis is automatic
 GRID_COORDINATOR=https://coordinator.grid-compute.com grid node
 ```
@@ -362,6 +368,7 @@ an IP-hiding relay is a separate service and is not implied by GP naming.
 |---------|------|
 | `grid coord` | Job coordinator |
 | `grid node` | **All-in-one** P2P peer + host + mine |
+| `grid mine` | **Miner-only** encrypted P2P replication + PoR work; no host containers |
 | `grid peer` | **P2P-only** listen/dial, chain replication, hello, ping RTT, peer gossip |
 | `grid auth` | Protect operator keys (passkey / password / 24-word / combo / nocrypt) |
 | `grid registry` | **Public mesh registry** (grid-compute.com) |
