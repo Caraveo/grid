@@ -7,6 +7,8 @@ use anyhow::{bail, Result};
 use chrono::Utc;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -16,6 +18,10 @@ use crate::genesis::GenesisKeys;
 use crate::por::{allocate_inclusion, allocate_proportional, split_emission, NodeScore};
 
 const BLOCKS_FILE: &str = "blocks.json";
+const MANIFEST_FILE: &str = "manifest.json";
+const SPLIT_BLOCKS_DIR: &str = "blocks";
+const SPLIT_STORAGE_VERSION: u32 = 1;
+const MAX_BLOCK_FILE_BYTES: u64 = 750_000;
 const DOMAIN: &str = "GRID-BLOCK-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,12 +170,45 @@ pub struct ChainReplica {
     pub blocks: Vec<Block>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChainManifest {
+    version: u32,
+    storage: String,
+    chain_id: String,
+    leader_pubkey: String,
+    max_supply: f64,
+    recovery_pubkeys: Vec<String>,
+    height: u64,
+    block_count: u64,
+    tip_hash: String,
+}
+
 impl ChainReplica {
     pub fn path_in(dir: &Path) -> PathBuf {
         dir.join("chain").join(BLOCKS_FILE)
     }
 
+    pub fn manifest_path_in(dir: &Path) -> PathBuf {
+        dir.join("chain").join(MANIFEST_FILE)
+    }
+
+    fn split_blocks_dir(dir: &Path) -> PathBuf {
+        dir.join("chain").join(SPLIT_BLOCKS_DIR)
+    }
+
+    fn split_block_path(dir: &Path, height: u64) -> PathBuf {
+        Self::split_blocks_dir(dir).join(format!("{height:020}.json"))
+    }
+
+    pub fn uses_split_storage(dir: &Path) -> bool {
+        Self::manifest_path_in(dir).is_file() && Self::split_blocks_dir(dir).is_dir()
+    }
+
     pub fn load(dir: &Path) -> Result<Option<Self>> {
+        if Self::manifest_path_in(dir).exists() {
+            return Ok(Some(Self::load_split(dir)?));
+        }
         let p = Self::path_in(dir);
         if !p.exists() {
             return Ok(None);
@@ -179,11 +218,135 @@ impl ChainReplica {
 
     pub fn save(&self, dir: &Path) -> Result<()> {
         self.verify()?;
-        let p = Self::path_in(dir);
-        std::fs::create_dir_all(p.parent().expect("chain parent"))?;
-        let tmp = p.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
-        std::fs::rename(tmp, p)?;
+        let blocks_dir = Self::split_blocks_dir(dir);
+        fs::create_dir_all(&blocks_dir)?;
+
+        let existing = Self::read_manifest(dir)?;
+        let start = if let Some(manifest) = existing {
+            if manifest.chain_id != self.chain_id
+                || manifest.leader_pubkey != self.leader_pubkey
+                || manifest.block_count == 0
+                || manifest.block_count > self.blocks.len() as u64
+            {
+                bail!("split-chain manifest does not match replica");
+            }
+            let committed_tip = &self.blocks[manifest.height as usize];
+            if block_hash(committed_tip)? != manifest.tip_hash {
+                bail!("split-chain manifest tip does not match replica");
+            }
+            manifest.block_count as usize
+        } else {
+            0
+        };
+
+        for block in self.blocks.iter().skip(start) {
+            Self::write_immutable_block(dir, block)?;
+        }
+
+        let manifest = ChainManifest {
+            version: SPLIT_STORAGE_VERSION,
+            storage: "split-blocks-v1".into(),
+            chain_id: self.chain_id.clone(),
+            leader_pubkey: self.leader_pubkey.clone(),
+            max_supply: self.max_supply,
+            recovery_pubkeys: self.recovery_pubkeys.clone(),
+            height: self.tip().height,
+            block_count: self.blocks.len() as u64,
+            tip_hash: block_hash(self.tip())?,
+        };
+        Self::write_manifest(dir, &manifest)?;
+        Ok(())
+    }
+
+    pub fn migrate_to_split_storage(dir: &Path) -> Result<usize> {
+        let replica = Self::load(dir)?.ok_or_else(|| anyhow::anyhow!("no chain replica found"))?;
+        replica.save(dir)?;
+        Ok(replica.blocks.len())
+    }
+
+    fn read_manifest(dir: &Path) -> Result<Option<ChainManifest>> {
+        let path = Self::manifest_path_in(dir);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path)?;
+        let manifest: ChainManifest = serde_json::from_str(&raw)?;
+        if manifest.version != SPLIT_STORAGE_VERSION
+            || manifest.storage != "split-blocks-v1"
+            || manifest.block_count == 0
+            || manifest.height.saturating_add(1) != manifest.block_count
+            || manifest.block_count > 100_000_000
+        {
+            bail!("invalid split-chain manifest");
+        }
+        Ok(Some(manifest))
+    }
+
+    fn load_split(dir: &Path) -> Result<Self> {
+        let manifest =
+            Self::read_manifest(dir)?.ok_or_else(|| anyhow::anyhow!("missing chain manifest"))?;
+        let mut blocks = Vec::with_capacity(manifest.block_count as usize);
+        for height in 0..manifest.block_count {
+            let path = Self::split_block_path(dir, height);
+            let metadata = fs::metadata(&path)?;
+            if metadata.len() == 0 || metadata.len() > MAX_BLOCK_FILE_BYTES {
+                bail!("invalid split block size at height {height}");
+            }
+            let block: Block = serde_json::from_slice(&fs::read(&path)?)?;
+            if block.height != height {
+                bail!("split block filename/height mismatch at {height}");
+            }
+            blocks.push(block);
+        }
+        let replica = Self {
+            chain_id: manifest.chain_id,
+            leader_pubkey: manifest.leader_pubkey,
+            max_supply: manifest.max_supply,
+            recovery_pubkeys: manifest.recovery_pubkeys,
+            blocks,
+        };
+        replica.verify()?;
+        if replica.tip().height != manifest.height
+            || block_hash(replica.tip())? != manifest.tip_hash
+        {
+            bail!("split-chain tip does not match manifest");
+        }
+        Ok(replica)
+    }
+
+    fn write_immutable_block(dir: &Path, block: &Block) -> Result<()> {
+        let path = Self::split_block_path(dir, block.height);
+        if path.exists() {
+            let existing: Block = serde_json::from_slice(&fs::read(&path)?)?;
+            if block_hash(&existing)? != block_hash(block)? {
+                bail!("refusing to overwrite finalized block {}", block.height);
+            }
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec_pretty(block)?;
+        if bytes.len() as u64 > MAX_BLOCK_FILE_BYTES {
+            bail!("block {} exceeds split-file size limit", block.height);
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    fn write_manifest(dir: &Path, manifest: &ChainManifest) -> Result<()> {
+        let path = Self::manifest_path_in(dir);
+        let tmp = path.with_extension("json.tmp");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
+        file.write_all(&serde_json::to_vec_pretty(manifest)?)?;
+        file.sync_all()?;
+        fs::rename(tmp, path)?;
         Ok(())
     }
 
@@ -347,5 +510,50 @@ mod tests {
         assert!(r.verify().is_ok());
         r.blocks[1].height = 7;
         assert!(r.verify().is_err());
+    }
+
+    #[test]
+    fn split_storage_appends_immutable_block_files() {
+        let d = tempdir().unwrap();
+        let k = generate_keypair(d.path()).unwrap();
+        let mut replica = ChainReplica::create_genesis(&k, vec![]).unwrap();
+        replica.save(d.path()).unwrap();
+
+        let block_zero = ChainReplica::split_block_path(d.path(), 0);
+        let original_zero = std::fs::read(&block_zero).unwrap();
+        assert!(ChainReplica::uses_split_storage(d.path()));
+        assert!(!ChainReplica::path_in(d.path()).exists());
+
+        replica
+            .append_leader_block(&k, &ChainState::default(), vec![])
+            .unwrap();
+        replica.save(d.path()).unwrap();
+        assert_eq!(std::fs::read(block_zero).unwrap(), original_zero);
+        assert!(ChainReplica::split_block_path(d.path(), 1).exists());
+
+        let loaded = ChainReplica::load(d.path()).unwrap().unwrap();
+        assert_eq!(loaded.tip().height, 1);
+        loaded.verify().unwrap();
+    }
+
+    #[test]
+    fn legacy_file_migrates_without_being_rewritten() {
+        let d = tempdir().unwrap();
+        let k = generate_keypair(d.path()).unwrap();
+        let replica = ChainReplica::create_genesis(&k, vec![]).unwrap();
+        let legacy_path = ChainReplica::path_in(d.path());
+        std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        let legacy = serde_json::to_vec_pretty(&replica).unwrap();
+        std::fs::write(&legacy_path, &legacy).unwrap();
+
+        assert!(!ChainReplica::uses_split_storage(d.path()));
+        assert_eq!(ChainReplica::migrate_to_split_storage(d.path()).unwrap(), 1);
+        assert_eq!(std::fs::read(legacy_path).unwrap(), legacy);
+        assert!(ChainReplica::uses_split_storage(d.path()));
+        ChainReplica::load(d.path())
+            .unwrap()
+            .unwrap()
+            .verify()
+            .unwrap();
     }
 }

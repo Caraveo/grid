@@ -11,7 +11,7 @@
 
 [![macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.2.17-blue.svg)](https://github.com/Caraveo/grid/releases)
+[![Version](https://img.shields.io/badge/version-0.2.19-blue.svg)](https://github.com/Caraveo/grid/releases)
 [![Status](https://img.shields.io/badge/status-PREALPHA-red.svg)](https://github.com/Caraveo/grid)
 
 <p align="center">
@@ -211,7 +211,7 @@ grid registry                       # peers + compute stats
 ```
 
 API: `GET https://grid-compute.com/api/registry/computes?available=1`  
-Announce: `POST /api/registry/computes` (same webhook secret as mesh ping). No IPs stored.
+Announce: `POST /api/registry/computes` (registered-capacity authorization). No IPs stored.
 
 
 Work kind: `blake3_work` payload `seed|iterations` (default 250k iterated BLAKE3).
@@ -251,7 +251,6 @@ grid registry --json
 ```bash
 # ~/.grid/env   (chmod 600)  — never commit this file
 # GRID_SITE_URL defaults to https://grid-compute.com if unset
-GRID_WEBHOOK_SECRET=...          # Cloudflare Worker secret (required in prod)
 GRID_GLOBE_LAT=37.7
 GRID_GLOBE_LNG=-122.4
 GRID_GLOBE_REGION=NA-W
@@ -268,6 +267,10 @@ grid node   # pings registry on start + every ~5m after heartbeat
 ```
 
 Skip coords → mining continues; you just won’t appear on the globe/registry.
+The node creates a dedicated mode-`0600` Ed25519 heartbeat key on first use.
+Every pulse is signed, the public node id is derived from that public key, and
+Cloudflare rejects replayed nonces atomically. No shared mesh secret is shipped
+to node operators, and private heartbeat keys never leave the machine.
 
 ### Auth (protect operator keys)
 
@@ -299,11 +302,11 @@ grid genesis track --id bob-1 --name bob --listen 127.0.0.1:9901 --class S
 ### P2P mesh (GP discovery + encrypted transport)
 
 ```bash
-# terminal A
-grid peer --listen 127.0.0.1:9900 --with-bench
+# terminal A — Genesis is dialed automatically
+grid peer --with-bench
 
-# terminal B
-grid peer --listen 127.0.0.1:9901 --connect 127.0.0.1:9900 --with-bench
+# terminal B — host + mine is a separate process
+GRID_COORDINATOR=https://coordinator.grid-compute.com grid node
 ```
 
 You should see **hello**, **pong rtt=… ms**, and a **peers** list.
@@ -327,6 +330,7 @@ an IP-hiding relay is a separate service and is not implied by GP naming.
 | `grid submit` | Submit allowlisted job (`echo`, `hash_file`) |
 | `grid stats` | Jobs + nodes |
 | `grid status` | Config + host metrics + Bitcoin TSL |
+| `grid mainnet` | **Fail-closed decentralized-mainnet launch gate** |
 | `grid wallet` | Balance stub + GRID → BTC exit reminder |
 | `grid resources` | CPU / memory sample |
 
@@ -344,9 +348,26 @@ an IP-hiding relay is a separate service and is not implied by GP naming.
 
 **Later**
 
-- Docker / GPU kernels, Genesis Earn locks on-rail  
-- libp2p / NAT traversal, critical-latency fabric  
+- Validator proposal/vote transport and enforced 3-of-4 quorum certificates
+- Four independently operated validators and an external consensus audit
+- NAT traversal / relay hardening and critical-latency fabric
 - **Edge wallets** (below)
+
+### Decentralized mainnet gate
+
+```bash
+grid mainnet
+grid mainnet --json
+grid mainnet --migrate-storage   # one-time, keeps legacy blocks.json snapshot
+```
+
+This command intentionally reports `NOT READY` while blocks are finalized by
+one Genesis leader. GRID already has Ed25519 validator-vote and 2f+1 quorum
+certificate verification primitives, but they are not yet wired into block
+proposal/finality. The production pilot must not be described as decentralized
+mainnet until certificates are enforced, at least four independent validators
+are live, the separate 5B treasury state is implemented, block persistence is
+append-only with tested backups, and an external audit passes.
 
 ---
 

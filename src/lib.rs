@@ -12,6 +12,7 @@ pub mod chain;
 pub mod claim;
 pub mod compute;
 pub mod config;
+pub mod consensus;
 pub mod coord;
 pub mod crypto;
 pub mod earn;

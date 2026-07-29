@@ -186,6 +186,16 @@ enum Commands {
     /// Local config + host resources
     Status,
 
+    /// Production-mainnet launch gate (never promotes a single-signer pilot)
+    Mainnet {
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// One-time, non-destructive blocks.json → immutable per-height files
+        #[arg(long)]
+        migrate_storage: bool,
+    },
+
     /// Host resource sample
     Resources,
 
@@ -521,8 +531,12 @@ enum AuthCmd {
 enum GenesisCmd {
     /// Create genesis Ed25519 keypair (secret never leaves this host)
     Init,
-    /// One-time migration: create signed block genesis from existing protected authority
-    ChainInit,
+    /// Create signed block genesis from the configured authority
+    ChainInit {
+        /// Load a mode-0600 operational key on a dedicated Genesis host
+        #[arg(long)]
+        operational: bool,
+    },
     /// Serve signed truth over HTTP (read-only; no remote ban)
     Serve {
         #[arg(long, default_value = "127.0.0.1:9100")]
@@ -643,7 +657,9 @@ async fn main() -> Result<()> {
             println!("  Coord:    {}", cfg.coordinator);
             println!(
                 "  Solana:   {}",
-                cfg.solana_reward_wallet.as_deref().unwrap_or("not configured")
+                cfg.solana_reward_wallet
+                    .as_deref()
+                    .unwrap_or("not configured")
             );
             println!("  Config:   {}", path.display());
             println!("\nNext:");
@@ -921,6 +937,25 @@ async fn main() -> Result<()> {
             resources::print_summary()?;
         }
 
+        Commands::Mainnet {
+            json,
+            migrate_storage,
+        } => {
+            if migrate_storage {
+                let blocks = grid::blockchain::ChainReplica::migrate_to_split_storage(&config_dir)?;
+                if !json {
+                    println!(
+                        "✓ migrated {blocks} block(s) to {}",
+                        grid::blockchain::ChainReplica::manifest_path_in(&config_dir).display()
+                    );
+                    println!("  legacy blocks.json retained as a read-only snapshot");
+                    println!();
+                }
+            }
+            let report = grid::consensus::readiness(&config_dir);
+            grid::consensus::print_readiness(&report, json)?;
+        }
+
         Commands::Registry { url, json } => {
             let snap = grid::mesh_ping::fetch_registry(url.as_deref()).await?;
             grid::mesh_ping::print_registry(&snap, json)?;
@@ -1035,24 +1070,25 @@ async fn main() -> Result<()> {
             run_wallet(&config_dir, action.unwrap_or(WalletCmd::Status)).await?;
         }
 
-        Commands::Solana { action } => {
-            match action.unwrap_or(SolanaCmd::Status) {
-                SolanaCmd::Create => {
-                    let address = grid::solana_wallet::create(&config_dir)?;
-                    println!("✓ Solana reward wallet created");
-                    println!("  address  {address}");
-                    println!("  keypair  {}", config_dir.join("keys/solana-reward.json").display());
-                    println!("  network  devnet");
-                    println!("  backup this keypair; GRID cannot recover it");
-                }
-                SolanaCmd::Import { address } => {
-                    let address = grid::solana_wallet::import_address(&config_dir, &address)?;
-                    println!("✓ Solana reward address configured (watch-only)");
-                    println!("  address  {address}");
-                }
-                SolanaCmd::Status => grid::solana_wallet::status(&config_dir).await?,
+        Commands::Solana { action } => match action.unwrap_or(SolanaCmd::Status) {
+            SolanaCmd::Create => {
+                let address = grid::solana_wallet::create(&config_dir)?;
+                println!("✓ Solana reward wallet created");
+                println!("  address  {address}");
+                println!(
+                    "  keypair  {}",
+                    config_dir.join("keys/solana-reward.json").display()
+                );
+                println!("  network  devnet");
+                println!("  backup this keypair; GRID cannot recover it");
             }
-        }
+            SolanaCmd::Import { address } => {
+                let address = grid::solana_wallet::import_address(&config_dir, &address)?;
+                println!("✓ Solana reward address configured (watch-only)");
+                println!("  address  {address}");
+            }
+            SolanaCmd::Status => grid::solana_wallet::status(&config_dir).await?,
+        },
 
         Commands::Gui { action } => match action {
             GuiCmd::Snapshot => {
@@ -1486,17 +1522,24 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             println!("Distribute ONLY the public key to peers:");
             println!("  export GRID_GENESIS_PUBKEY={}", authority.leader_pubkey);
         }
-        GenesisCmd::ChainInit => {
-            let dek =
-                grid::passkey::require_identity(config_dir, "create signed block genesis").await?;
+        GenesisCmd::ChainInit { operational } => {
             if grid::blockchain::ChainReplica::load(config_dir)?.is_some() {
                 anyhow::bail!("block genesis already exists");
             }
             let authority = load_authority(config_dir)?;
-            let replica = grid::blockchain::ChainReplica::create_genesis(
-                &load_protected(config_dir, &dek)?,
-                authority.recovery_pubkeys,
-            )?;
+            let keys = if operational {
+                grid::genesis::load_keypair(config_dir)?
+            } else {
+                let dek =
+                    grid::passkey::require_identity(config_dir, "create signed block genesis")
+                        .await?;
+                load_protected(config_dir, &dek)?
+            };
+            if authority.leader_pubkey != keys.public_hex() {
+                anyhow::bail!("operational signer does not match Genesis authority");
+            }
+            let replica =
+                grid::blockchain::ChainReplica::create_genesis(&keys, authority.recovery_pubkeys)?;
             replica.save(config_dir)?;
             println!("✓ signed block genesis created: {}", replica.chain_id);
         }
@@ -1506,9 +1549,11 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             let keys = if operational {
                 grid::genesis::load_keypair(config_dir)?
             } else {
-                let dek =
-                    grid::passkey::require_identity(config_dir, "serve protected genesis authority")
-                        .await?;
+                let dek = grid::passkey::require_identity(
+                    config_dir,
+                    "serve protected genesis authority",
+                )
+                .await?;
                 load_protected(config_dir, &dek)?
             };
             run_genesis_server(config_dir.clone(), &bind, keys).await?;
@@ -1525,11 +1570,8 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
             let keys = if operational {
                 grid::genesis::load_keypair(config_dir)?
             } else {
-                let dek = grid::passkey::require_identity(
-                    config_dir,
-                    "produce signed GRID blocks",
-                )
-                .await?;
+                let dek = grid::passkey::require_identity(config_dir, "produce signed GRID blocks")
+                    .await?;
                 load_protected(config_dir, &dek)?
             };
             grid::genesis::run_block_producer(

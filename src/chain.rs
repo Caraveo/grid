@@ -23,7 +23,8 @@ use crate::address::{is_valid_address, normalize_address};
 
 /// Hard ceiling on circulating GRID.
 /// Compute-reward allocation enforced by the pilot reward ledger.
-pub const MAX_SUPPLY: f64 = 5_000_000_000.0;
+/// Fixed protocol cap: 5B compute-emission allocation + 5B treasury allocation.
+pub const MAX_SUPPLY: f64 = 10_000_000_000.0;
 /// Unclaimed mint older than this is burned by protocol.
 pub const BURN_DEADLINE_DAYS: i64 = 365;
 /// Maximum newly-issued GRID per one-hour protocol epoch until governance
@@ -61,7 +62,9 @@ pub struct ChainState {
     pub updated_at: String,
 }
 
-fn default_epoch_budget() -> f64 { DEFAULT_EPOCH_BUDGET }
+fn default_epoch_budget() -> f64 {
+    DEFAULT_EPOCH_BUDGET
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

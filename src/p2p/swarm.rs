@@ -501,11 +501,30 @@ async fn handle_connection(
             }
             Message::GetBlocks { from_height } => {
                 if let Ok(Some(replica)) = crate::blockchain::ChainReplica::load(&opts.config_dir) {
-                    let blocks = replica
+                    // Bound every sync response well below the 1 MB encrypted
+                    // protocol frame. The requester asks again from its new tip
+                    // on the next tick, so large histories stream in chunks.
+                    const MAX_SYNC_BLOCKS: usize = 25;
+                    const MAX_SYNC_BYTES: usize = 700_000;
+                    let mut blocks = Vec::new();
+                    let mut bytes = 0usize;
+                    for block in replica
                         .blocks
                         .into_iter()
-                        .filter(|b| b.height >= from_height)
-                        .collect();
+                        .filter(|block| block.height >= from_height)
+                    {
+                        let block_bytes = serde_json::to_vec(&block)
+                            .map(|encoded| encoded.len())
+                            .unwrap_or(MAX_SYNC_BYTES);
+                        if !blocks.is_empty()
+                            && (blocks.len() >= MAX_SYNC_BLOCKS
+                                || bytes.saturating_add(block_bytes) > MAX_SYNC_BYTES)
+                        {
+                            break;
+                        }
+                        bytes = bytes.saturating_add(block_bytes);
+                        blocks.push(block);
+                    }
                     tx.send(Message::Blocks { blocks }).await.ok();
                 }
             }
