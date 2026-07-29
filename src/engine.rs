@@ -101,6 +101,16 @@ pub struct WebServiceManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceDeployKey {
+    pub service: String,
+    pub repository: String,
+    pub public_key: String,
+    pub private_key_path: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WebServiceSpec {
     pub image: String,
     pub git: GitSource,
@@ -259,8 +269,8 @@ pub fn volume_status(config_dir: &Path, name: &str) -> Result<VolumeMetadata> {
 
 pub fn scaffold_web_service(path: &Path, name: &str, repository: &str) -> Result<()> {
     if path.exists() { bail!("{} already exists; refusing to overwrite", path.display()); }
-    if !repository.starts_with("https://") || repository.contains(char::is_whitespace) {
-        bail!("repository must be a whitespace-free https:// Git URL");
+    if !valid_git_url(repository) {
+        bail!("repository must be a whitespace-free HTTPS or SSH Git URL");
     }
     let manifest = WebServiceManifest {
         api_version: "grid/v1alpha1".into(),
@@ -286,6 +296,44 @@ pub fn load_web_service(path: &Path) -> Result<WebServiceManifest> {
     if !m.spec.image.starts_with("caddy:") { bail!("phase 1 web services require the approved Caddy image"); }
     if m.spec.exposure != "grid-tunnel" { bail!("web services must use exposure: grid-tunnel; direct host ports are forbidden"); }
     if m.spec.service_port != default_service_port() { bail!("web services must use the GRID service port"); }
-    if !m.spec.git.repository.starts_with("https://") || m.spec.git.repository.contains(char::is_whitespace) { bail!("git.repository must be a whitespace-free https:// URL"); }
+    if !valid_git_url(&m.spec.git.repository) { bail!("git.repository must be a whitespace-free HTTPS or SSH URL"); }
     Ok(m)
+}
+
+fn valid_git_url(value: &str) -> bool {
+    !value.contains(char::is_whitespace)
+        && (value.starts_with("https://") || value.starts_with("ssh://") || value.starts_with("git@"))
+}
+
+pub async fn create_service_deploy_key(config_dir: &Path, service: &str, repository: &str) -> Result<ServiceDeployKey> {
+    let service = volume_name(service)?;
+    if !valid_git_url(repository) { bail!("repository must be a whitespace-free HTTPS or SSH Git URL"); }
+    require("ssh-keygen", "Install OpenSSH (ssh-keygen) before creating a deploy key.")?;
+    let root = config_dir.join("engine").join("services").join(&service);
+    let private_path = root.join("deploy.key.enc");
+    if private_path.exists() { bail!("a deploy key already exists for {service}; refusing to overwrite"); }
+    fs::create_dir_all(&root)?;
+    let tmp = root.join(format!(".keygen-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&tmp)?;
+    #[cfg(unix)]
+    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700))?; }
+    let generated = tmp.join("id_ed25519");
+    let status = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", &format!("grid-engine:{service}"), "-f"])
+        .arg(&generated)
+        .status()
+        .context("generate SSH deploy key")?;
+    if !status.success() { let _ = fs::remove_dir_all(&tmp); bail!("ssh-keygen failed"); }
+    let mut private = fs::read(&generated)?;
+    let public = fs::read_to_string(generated.with_extension("pub"))?.trim().to_string();
+    let dek = crate::passkey::require_unlocked(config_dir, "encrypt Engine deploy key").await?;
+    let sealed = crate::passkey::encrypt_with_vault(&dek, &private)?;
+    private.zeroize();
+    fs::write(&private_path, sealed)?;
+    #[cfg(unix)]
+    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&private_path, fs::Permissions::from_mode(0o600))?; }
+    fs::remove_dir_all(&tmp)?;
+    let key = ServiceDeployKey { service, repository: repository.into(), public_key: public, private_key_path: private_path.display().to_string(), created_at: chrono::Utc::now().to_rfc3339() };
+    fs::write(root.join("deploy-key.json"), serde_json::to_string_pretty(&key)?)?;
+    Ok(key)
 }

@@ -521,6 +521,13 @@ enum EngineServiceCmd {
     },
     /// Validate a service request without starting it
     Check { path: PathBuf },
+    /// Create a vault-wrapped SSH deploy key for one private Git repository
+    KeyCreate {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        repo: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1018,6 +1025,13 @@ async fn main() -> Result<()> {
                     println!("  image        {} (private registry promotion pins the digest)", service.spec.image);
                     println!("  git          {}#{}", service.spec.git.repository, service.spec.git.branch);
                     println!("  exposure     GRID tunnel only");
+                }
+                EngineServiceCmd::KeyCreate { name, repo } => {
+                    let key = grid::engine::create_service_deploy_key(&config_dir, &name, &repo).await?;
+                    println!("✓ Deploy key created for {}", key.service);
+                    println!("  add this public key as a read-only deploy key on {}:", key.repository);
+                    println!("  {}", key.public_key);
+                    println!("  private key  vault-wrapped; never mounted into a container");
                 }
             },
             EngineCmd::Init { path, name } => {
