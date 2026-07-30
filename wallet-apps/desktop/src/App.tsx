@@ -63,7 +63,7 @@ export function App() {
   return (
     <div className="app">
       <aside>
-        <div className="brand"><span className="mark">▦</span><div><b>EMBER</b><small>GRID WALLET</small></div></div>
+        <div className="brand"><span className="mark">▦</span><div><b>PHOENIX</b><small>GRID WALLET</small></div></div>
         <nav>{pages.map((item) => (
           <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}>
             <span>{item.icon}</span>{item.label}

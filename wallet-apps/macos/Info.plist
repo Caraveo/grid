@@ -6,8 +6,8 @@
   <key>CFBundleExecutable</key><string>GRIDWallet</string>
   <key>CFBundleIdentifier</key><string>com.grid.wallet</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>GRID Wallet</string>
-  <key>CFBundleDisplayName</key><string>GRID Wallet</string>
+  <key>CFBundleName</key><string>Phoenix</string>
+  <key>CFBundleDisplayName</key><string>Phoenix — GRID Wallet</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.2</string>
   <key>CFBundleVersion</key><string>3</string>

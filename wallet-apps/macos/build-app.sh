@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MAC="$(cd "$(dirname "$0")" && pwd)"
 DIST="$ROOT/dist/wallet"
-APP="$DIST/GRID Wallet.app"
+APP="$DIST/Phoenix — GRID Wallet.app"
 SWIFT_CACHE="$ROOT/target/swift-cache"
 
 cd "$MAC"

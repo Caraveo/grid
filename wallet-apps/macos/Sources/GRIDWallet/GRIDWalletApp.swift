@@ -88,7 +88,7 @@ struct WalletRootView: View {
                 }
             }
         }
-        .alert("GRID Wallet", isPresented: Binding(
+        .alert("Phoenix — GRID Wallet", isPresented: Binding(
             get: { model.error != nil },
             set: { if !$0 { model.error = nil } }
         )) {
@@ -123,7 +123,7 @@ struct Brand: View {
             }
             .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 1) {
-                Text("EMBER").font(.headline).tracking(3)
+                Text("PHOENIX").font(.headline).tracking(3)
                 Text("GRID WALLET").font(.caption2).foregroundStyle(.secondary).tracking(2)
             }
             Spacer()

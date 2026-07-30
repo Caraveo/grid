@@ -1,6 +1,6 @@
-# GRID Wallet applications
+# Phoenix — GRID Wallet applications
 
-The official wallet suite uses one Rust wallet contract:
+Phoenix, the official GRID Wallet suite, uses one Rust wallet contract:
 
 - `macos/` — native SwiftUI application with system/light/dark themes.
 - `desktop/` — Tauri application for Windows and Linux.

@@ -27,5 +27,5 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![wallet_snapshot, wallet_action])
         .run(tauri::generate_context!())
-        .expect("GRID Wallet failed to start");
+        .expect("Phoenix GRID Wallet failed to start");
 }

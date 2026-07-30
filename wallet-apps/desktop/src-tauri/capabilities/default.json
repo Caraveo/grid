@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default GRID Wallet capability",
+  "description": "Default Phoenix GRID Wallet capability",
   "windows": ["main"],
   "permissions": ["core:default"]
 }
