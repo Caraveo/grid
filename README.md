@@ -22,6 +22,11 @@
 [![Language](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![Network](https://img.shields.io/badge/network-Genesis%20pilot-ec8a26.svg)](https://explorer.grid-compute.com)
 
+> **Canonical project:** This is the primary GRID repository. It contains the
+> protocol, Rust CLI, P2P node, blockchain, mining, wallet, and Engine runtime.
+> The related repositories below provide the public site, coordinator, MESH
+> desktop client, and Solana integration.
+
 > **Network status:** GRID is a public, Genesis-led production pilot. It is **not** decentralized mainnet consensus and must not be represented as such. A single Genesis leader currently finalizes canonical blocks; enforced independent validator quorum, audits, and hardened production operations remain launch gates.
 
 ## What GRID is
@@ -342,10 +347,10 @@ Related repositories in the GRID workspace:
 
 | Project | Purpose |
 | --- | --- |
-| `grid-site` | Public website, explorer UI, documentation UI, and Cloudflare integration |
-| `grid-coordinator` | Coordinator-facing service material |
-| `grid-net` | Network tooling and support code |
-| `grid-solana` | Solana devnet token/reward experimentation |
+| [`grid-site`](https://github.com/Caraveo/grid-site) | Public website, explorer UI, documentation UI, and Cloudflare integration |
+| [`grid-coordinator`](https://github.com/Caraveo/grid-coordinator) | Coordinator-facing service material |
+| [`grid-net`](https://github.com/Caraveo/grid-net) | MESH desktop client, network tooling, and support code |
+| [`grid-solona`](https://github.com/Caraveo/grid-solona) | Solana devnet token/reward experimentation |
 
 ## Documentation
 
