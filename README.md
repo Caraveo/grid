@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./logo.svg" alt="GRID" width="84" height="84" />
+  <img src="./images/project-header-banner.png" alt="GRID — Proof-of-Resource Compute Network" />
 </p>
 
 <h1 align="center">GRID</h1>
