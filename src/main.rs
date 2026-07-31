@@ -30,6 +30,36 @@ const DEFAULT_GENESIS_PEER: &str = grid::genesis::CANONICAL_P2P_PEER;
 const DEFAULT_GENESIS_URL: &str = grid::genesis::CANONICAL_TRUTH_URL;
 const DEFAULT_GENESIS_PUBKEY: &str = grid::genesis::CANONICAL_LEADER_PUBKEY;
 
+async fn require_current_operator_cli() -> Result<()> {
+    let endpoint =
+        std::env::var("GRID_GENESIS").unwrap_or_else(|_| DEFAULT_GENESIS_URL.to_string());
+    let skip = std::env::var("GRID_DEV_SKIP_VERSION_GATE").ok().as_deref() == Some("1");
+    if skip {
+        if endpoint.trim_end_matches('/') == DEFAULT_GENESIS_URL.trim_end_matches('/') {
+            anyhow::bail!("GRID_DEV_SKIP_VERSION_GATE cannot bypass the canonical Genesis policy");
+        }
+        eprintln!("[WARN] development network CLI version gate bypassed");
+        return Ok(());
+    }
+    let expected_key =
+        if endpoint.trim_end_matches('/') == DEFAULT_GENESIS_URL.trim_end_matches('/') {
+            Some(DEFAULT_GENESIS_PUBKEY)
+        } else {
+            None
+        };
+    let truth = grid::genesis::fetch_truth(&endpoint, expected_key).await?;
+    grid::version_gate::require_minimum(
+        grid::version_gate::CURRENT_CLI_VERSION,
+        &truth.body.minimum_cli_version,
+    )?;
+    println!(
+        "✓ CLI policy verified: {} (network minimum {})",
+        grid::version_gate::CURRENT_CLI_VERSION,
+        truth.body.minimum_cli_version
+    );
+    Ok(())
+}
+
 #[derive(Parser)]
 #[command(name = "grid")]
 #[command(about = "GRID — host useful compute · mine security PoR · Bitcoin TSL")]
@@ -878,6 +908,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            require_current_operator_cli().await?;
             let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_engine_host(cfg, compute).await?;
@@ -894,6 +925,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            require_current_operator_cli().await?;
             let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_miner_node(
@@ -985,6 +1017,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            require_current_operator_cli().await?;
             let cfg = load_cfg(&config_dir, coordinator, id, class, gpu, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_combined_node(

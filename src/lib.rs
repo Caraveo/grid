@@ -39,6 +39,7 @@ pub mod resources;
 pub mod solana_wallet;
 pub mod supply;
 pub mod tsl;
+pub mod version_gate;
 
 pub use config::{NodeClass, NodeConfig};
 pub use tsl::TransactSecurityLayer;

@@ -590,6 +590,9 @@ struct ClaimBody {
     /// `host` | `mine` | `both` (default both for back-compat)
     #[serde(default)]
     track: Option<String>,
+    /// Required since v0.2.24. Missing versions from older clients fail closed.
+    #[serde(default)]
+    cli_version: String,
 }
 
 fn track_matches(job_kind: &str, want: &str) -> bool {
@@ -608,6 +611,18 @@ fn track_matches(job_kind: &str, want: &str) -> bool {
 }
 
 async fn claim(State(app): State<App>, Json(body): Json<ClaimBody>) -> impl IntoResponse {
+    let minimum = crate::version_gate::configured_minimum();
+    if let Err(error) = crate::version_gate::require_minimum(&body.cli_version, &minimum) {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            Json(serde_json::json!({
+                "error": error.to_string(),
+                "currentVersion": body.cli_version,
+                "minimumVersion": minimum,
+            })),
+        )
+            .into_response();
+    }
     let mut g = app.inner.lock();
     if !g.nodes.contains_key(&body.node_id) {
         return (
