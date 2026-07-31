@@ -1,4 +1,4 @@
-//! One-time, end-to-end encrypted pairing from a local GRID vault to Arc.
+//! One-time, end-to-end encrypted pairing from a local GRID vault to ARK.
 //!
 //! The request contains only a mobile ephemeral X25519 public key. The response
 //! encrypts the wallet signing key directly to that key with XChaCha20-Poly1305.
@@ -22,9 +22,12 @@ use zeroize::Zeroizing;
 use crate::passkey::{load_operator_signing_key, require_identity};
 use crate::wallet::WalletMeta;
 
-const REQUEST_PREFIX: &str = "gridarc://pair/v1/request?data=";
-const RESPONSE_PREFIX: &str = "gridarc://pair/v1/response?data=";
-const PAIR_INFO: &[u8] = b"GRID-ARC-PAIR-v1";
+const REQUEST_PREFIX: &str = "gridark://pair/v1/request?data=";
+const RESPONSE_PREFIX: &str = "gridark://pair/v1/response?data=";
+const PAIR_INFO: &[u8] = b"GRID-ARK-PAIR-v1";
+const LEGACY_REQUEST_PREFIX: &str = "gridarc://pair/v1/request?data=";
+const LEGACY_RESPONSE_PREFIX: &str = "gridarc://pair/v1/response?data=";
+const LEGACY_PAIR_INFO: &[u8] = b"GRID-ARC-PAIR-v1";
 const MAX_PAIRING_LIFETIME_SECS: i64 = 5 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,10 +61,15 @@ struct WalletTransfer<'a> {
 }
 
 pub async fn create_pairing_response(config_dir: &Path, request_uri: &str) -> Result<String> {
-    let encoded = request_uri
-        .trim()
-        .strip_prefix(REQUEST_PREFIX)
-        .context("expected an Arc pairing request")?;
+    let trimmed = request_uri.trim();
+    let (encoded, response_prefix, pair_info) =
+        if let Some(encoded) = trimmed.strip_prefix(REQUEST_PREFIX) {
+            (encoded, RESPONSE_PREFIX, PAIR_INFO)
+        } else if let Some(encoded) = trimmed.strip_prefix(LEGACY_REQUEST_PREFIX) {
+            (encoded, LEGACY_RESPONSE_PREFIX, LEGACY_PAIR_INFO)
+        } else {
+            bail!("expected an ARK pairing request")
+        };
     let request_bytes = URL_SAFE_NO_PAD
         .decode(encoded)
         .context("invalid pairing request encoding")?;
@@ -86,7 +94,7 @@ pub async fn create_pairing_response(config_dir: &Path, request_uri: &str) -> Re
 
     // Require the strongest locally configured identity gate immediately before
     // decrypting the existing wallet key.
-    let dek = require_identity(config_dir, "Pair existing wallet with Arc").await?;
+    let dek = require_identity(config_dir, "Pair existing wallet with ARK").await?;
     let signing = load_operator_signing_key(config_dir, &dek)?;
     let wallet = WalletMeta::load(config_dir)?;
     if signing.verifying_key().as_bytes() != hex::decode(&wallet.pubkey_hex)?.as_slice() {
@@ -98,7 +106,7 @@ pub async fn create_pairing_response(config_dir: &Path, request_uri: &str) -> Re
     let shared = ephemeral.diffie_hellman(&PublicKey::from(mobile_key));
     let hkdf = Hkdf::<Sha256>::new(Some(request.request_id.as_bytes()), shared.as_bytes());
     let mut encryption_key = [0u8; 32];
-    hkdf.expand(PAIR_INFO, &mut encryption_key)
+    hkdf.expand(pair_info, &mut encryption_key)
         .map_err(|_| anyhow::anyhow!("pairing key derivation failed"))?;
 
     let secret_hex = Zeroizing::new(hex::encode(signing.to_bytes()));
@@ -131,7 +139,7 @@ pub async fn create_pairing_response(config_dir: &Path, request_uri: &str) -> Re
         ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
     };
     Ok(format!(
-        "{RESPONSE_PREFIX}{}",
+        "{response_prefix}{}",
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(&response)?)
     ))
 }

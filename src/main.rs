@@ -612,9 +612,9 @@ enum WalletCmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Pair this existing wallet to Arc with an encrypted one-time QR response
+    /// Pair this existing wallet to ARK with an encrypted one-time QR response
     Pair {
-        /// Public `gridarc://pair/v1/request?...` value shown by Arc.
+        /// Public `gridark://pair/v1/request?...` value shown by ARK.
         /// Omit it to paste the request at the interactive prompt.
         request: Option<String>,
     },
@@ -1821,7 +1821,7 @@ async fn run_wallet(config_dir: &PathBuf, action: WalletCmd) -> Result<()> {
             let request = match request {
                 Some(request) => request,
                 None => {
-                    eprint!("Paste the pairing request shown by Arc: ");
+                    eprint!("Paste the pairing request shown by ARK: ");
                     std::io::Write::flush(&mut std::io::stderr())?;
                     let mut request = String::new();
                     std::io::stdin().read_line(&mut request)?;
@@ -1834,7 +1834,7 @@ async fn run_wallet(config_dir: &PathBuf, action: WalletCmd) -> Result<()> {
             };
             let response = grid::arc_pairing::create_pairing_response(config_dir, &request).await?;
             let code = qrcode::QrCode::new(response.as_bytes())?;
-            println!("Scan this encrypted response with Arc:\n");
+            println!("Scan this encrypted response with ARK:\n");
             println!(
                 "{}",
                 code.render::<qrcode::render::unicode::Dense1x2>()

@@ -1,4 +1,4 @@
-//! Canonical Arc wallet envelopes.
+//! Canonical ARK wallet envelopes.
 //!
 //! Clients sign these bytes locally. Genesis verifies the signature, address,
 //! chain, expiry, and monotonically increasing account nonce before mutation.
@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::address::{encode_payment_hex, normalize_address};
 use crate::passkey::verify_operator_sig;
 
-const SEND_DOMAIN: &str = "GRID-ARC-SEND-v1";
+const SEND_DOMAIN: &str = "GRID-ARK-SEND-v1";
+const LEGACY_SEND_DOMAIN: &str = "GRID-ARC-SEND-v1";
 pub const MAX_MEMO_BYTES: usize = 280;
 pub const MAX_ENVELOPE_LIFETIME_SECS: i64 = 10 * 60;
 
@@ -37,7 +38,11 @@ pub struct SignedArcSend {
 }
 
 pub fn send_signing_bytes(intent: &ArcSendIntent) -> Result<Vec<u8>> {
-    let mut bytes = SEND_DOMAIN.as_bytes().to_vec();
+    signing_bytes_with_domain(intent, SEND_DOMAIN)
+}
+
+fn signing_bytes_with_domain(intent: &ArcSendIntent, domain: &str) -> Result<Vec<u8>> {
+    let mut bytes = domain.as_bytes().to_vec();
     bytes.push(b'\n');
     bytes.extend(serde_json::to_vec(intent)?);
     Ok(bytes)
@@ -91,11 +96,18 @@ pub fn validate_signed_send(
     if decimals > 12 {
         bail!("amount supports at most 12 decimal places");
     }
-    verify_operator_sig(
+    let current = verify_operator_sig(
         &envelope.public_key,
         &send_signing_bytes(intent)?,
         &envelope.signature,
-    )?;
+    );
+    if current.is_err() {
+        verify_operator_sig(
+            &envelope.public_key,
+            &signing_bytes_with_domain(intent, LEGACY_SEND_DOMAIN)?,
+            &envelope.signature,
+        )?;
+    }
     let _ = to;
     Ok(amount)
 }

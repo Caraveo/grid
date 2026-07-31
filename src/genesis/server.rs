@@ -55,8 +55,8 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
         // Announce is a *request to be noticed* — does NOT auto-track or ban.
         // Genesis operator still must `grid genesis track` locally.
         .route("/v1/announce", post(announce_handler))
-        // Browser access is limited to the published Arc web origin. Native
-        // clients do not send an Origin header and are unaffected.
+        // ARK is native-only. The browser origin remains limited to the public
+        // GRID site for operational diagnostics; native clients send no Origin.
         .layer(
             CorsLayer::new()
                 .allow_origin(HeaderValue::from_static("https://grid-compute.com"))
@@ -79,7 +79,7 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
     println!("  GET  /v1/pubkey  genesis public key");
     println!("  GET  /v1/wallet/:address  public balance + activity");
     println!("  GET  /v1/wallet/:address/nonce  next anti-replay nonce");
-    println!("  POST /v1/transactions  verify + commit signed Arc transfer");
+    println!("  POST /v1/transactions  verify + commit signed ARK transfer");
     println!("  POST /v1/announce  peer self-report (not trusted for bans)");
     println!();
 

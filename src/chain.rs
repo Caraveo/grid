@@ -57,7 +57,7 @@ pub struct ChainState {
     /// On-chain account balances by grid0 address.
     #[serde(default)]
     pub accounts: HashMap<String, f64>,
-    /// Last accepted Arc transaction nonce by sender address.
+    /// Last accepted ARK transaction nonce by sender address.
     #[serde(default)]
     pub account_nonces: HashMap<String, u64>,
     #[serde(default)]
