@@ -26,7 +26,9 @@ pub struct EngineManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineMetadata { pub name: String }
+pub struct EngineMetadata {
+    pub name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,32 +163,84 @@ pub struct GitSource {
     pub branch: String,
 }
 impl Default for StorageSpec {
-    fn default() -> Self { Self { encrypted_persistent_volumes: true, volume_quota_mib: default_volume_quota() } }
+    fn default() -> Self {
+        Self {
+            encrypted_persistent_volumes: true,
+            volume_quota_mib: default_volume_quota(),
+        }
+    }
 }
-impl Default for RuntimeSpec { fn default() -> Self { Self { cpus: default_cpus(), memory_mib: default_memory(), network_for_jobs: false } } }
-fn default_class() -> String { "S".into() }
-fn default_mode() -> String { "p2p".into() }
-fn default_listen() -> String { "0.0.0.0:9900".into() }
-fn default_cpus() -> f64 { 1.0 }
-fn default_memory() -> u64 { 512 }
-fn default_volume_quota() -> u64 { 10_240 }
-fn default_service_port() -> u16 { crate::compute::GRID_CONTAINER_PORT }
-fn default_branch() -> String { "main".into() }
+impl Default for RuntimeSpec {
+    fn default() -> Self {
+        Self {
+            cpus: default_cpus(),
+            memory_mib: default_memory(),
+            network_for_jobs: false,
+        }
+    }
+}
+fn default_class() -> String {
+    "S".into()
+}
+fn default_mode() -> String {
+    "p2p".into()
+}
+fn default_listen() -> String {
+    "0.0.0.0:9900".into()
+}
+fn default_cpus() -> f64 {
+    1.0
+}
+fn default_memory() -> u64 {
+    512
+}
+fn default_volume_quota() -> u64 {
+    10_240
+}
+fn default_service_port() -> u16 {
+    crate::compute::GRID_CONTAINER_PORT
+}
+fn default_branch() -> String {
+    "main".into()
+}
 
 pub fn load(path: &Path) -> Result<EngineManifest> {
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let m: EngineManifest = serde_yaml::from_str(&raw).context("invalid GRID Engine YAML")?;
-    if m.api_version != "grid/v1alpha1" || m.kind != "GridEngine" { bail!("expected apiVersion grid/v1alpha1 and kind GridEngine"); }
-    if m.metadata.name.trim().is_empty() { bail!("metadata.name is required"); }
-    if m.spec.mode != "p2p" { bail!("Engine phase 1 only permits spec.mode: p2p"); }
-    if m.spec.runtime.cpus <= 0.0 || m.spec.runtime.memory_mib < 64 { bail!("runtime requires cpus > 0 and memoryMiB >= 64"); }
-    if !m.spec.storage.encrypted_persistent_volumes { bail!("Engine requires encryptedPersistentVolumes: true"); }
+    if m.api_version != "grid/v1alpha1" || m.kind != "GridEngine" {
+        bail!("expected apiVersion grid/v1alpha1 and kind GridEngine");
+    }
+    if m.metadata.name.trim().is_empty() {
+        bail!("metadata.name is required");
+    }
+    if m.spec.mode != "p2p" {
+        bail!("Engine phase 1 only permits spec.mode: p2p");
+    }
+    if m.spec.runtime.cpus <= 0.0 || m.spec.runtime.memory_mib < 64 {
+        bail!("runtime requires cpus > 0 and memoryMiB >= 64");
+    }
+    if !m.spec.storage.encrypted_persistent_volumes {
+        bail!("Engine requires encryptedPersistentVolumes: true");
+    }
     Ok(m)
 }
 
 pub fn scaffold(path: &Path, name: &str) -> Result<()> {
-    if path.exists() { bail!("{} already exists; refusing to overwrite", path.display()); }
-    let m = EngineManifest { api_version: "grid/v1alpha1".into(), kind: "GridEngine".into(), metadata: EngineMetadata { name: name.into() }, spec: EngineSpec { mode: default_mode(), class: default_class(), p2p: P2pSpec::default(), runtime: RuntimeSpec::default(), storage: StorageSpec::default() } };
+    if path.exists() {
+        bail!("{} already exists; refusing to overwrite", path.display());
+    }
+    let m = EngineManifest {
+        api_version: "grid/v1alpha1".into(),
+        kind: "GridEngine".into(),
+        metadata: EngineMetadata { name: name.into() },
+        spec: EngineSpec {
+            mode: default_mode(),
+            class: default_class(),
+            p2p: P2pSpec::default(),
+            runtime: RuntimeSpec::default(),
+            storage: StorageSpec::default(),
+        },
+    };
     fs::write(path, serde_yaml::to_string(&m)?)?;
     Ok(())
 }
@@ -197,11 +251,27 @@ pub fn doctor() {
     let volume_backend = engine_tool_exists("gocryptfs");
     println!("GRID Engine");
     println!("  platform     {platform}");
-    println!("  runtime      {}", if nerdctl { "containerd/nerdctl ready" } else { "containerd/nerdctl not detected" });
-    println!("  volumes      {}", if volume_backend { "gocryptfs ready" } else { "gocryptfs not detected" });
+    println!(
+        "  runtime      {}",
+        if nerdctl {
+            "containerd/nerdctl ready"
+        } else {
+            "containerd/nerdctl not detected"
+        }
+    );
+    println!(
+        "  volumes      {}",
+        if volume_backend {
+            "gocryptfs ready"
+        } else {
+            "gocryptfs not detected"
+        }
+    );
     println!("  isolation    read-only FS · Caddy bind-service cap only · no-new-privileges · PID/memory/CPU limits");
     println!("  encryption   node keys remain in the local GRID vault; enable disk encryption separately");
-    if !nerdctl { println!("  next         Linux: rootless containerd + nerdctl · macOS: Lima + nerdctl · Windows: WSL2 + nerdctl"); }
+    if !nerdctl {
+        println!("  next         Linux: rootless containerd + nerdctl · macOS: Lima + nerdctl · Windows: WSL2 + nerdctl");
+    }
 }
 
 /// Install the supported runtime after the user explicitly invokes
@@ -250,13 +320,7 @@ pub fn install(config_dir: &Path) -> Result<()> {
         }
         run(
             "limactl",
-            &[
-                "shell",
-                "grid-containerd",
-                "sudo",
-                "apt-get",
-                "update",
-            ],
+            &["shell", "grid-containerd", "sudo", "apt-get", "update"],
         )?;
         run(
             "limactl",
@@ -278,11 +342,34 @@ pub fn install(config_dir: &Path) -> Result<()> {
         bail!("WSL2 was requested. Reboot if Windows asks, then run `grid engine install` inside Ubuntu WSL.");
     } else if command_exists("apt-get") {
         run("sudo", &["apt-get", "update"])?;
-        run("sudo", &["apt-get", "install", "-y", "containerd", "nerdctl", "gocryptfs"])?;
+        run(
+            "sudo",
+            &[
+                "apt-get",
+                "install",
+                "-y",
+                "containerd",
+                "nerdctl",
+                "gocryptfs",
+            ],
+        )?;
     } else if command_exists("dnf") {
-        run("sudo", &["dnf", "install", "-y", "containerd", "nerdctl", "gocryptfs"])?;
+        run(
+            "sudo",
+            &["dnf", "install", "-y", "containerd", "nerdctl", "gocryptfs"],
+        )?;
     } else if command_exists("pacman") {
-        run("sudo", &["pacman", "-Sy", "--noconfirm", "containerd", "nerdctl", "gocryptfs"])?;
+        run(
+            "sudo",
+            &[
+                "pacman",
+                "-Sy",
+                "--noconfirm",
+                "containerd",
+                "nerdctl",
+                "gocryptfs",
+            ],
+        )?;
     } else {
         bail!("Unsupported Linux package manager. Install rootless containerd + nerdctl, then rerun `grid engine install`.");
     }
@@ -328,13 +415,17 @@ fn runtime_ready_sync() -> bool {
             .map(|status| status.success())
             .unwrap_or(false)
     } else {
-        Command::new(if cfg!(windows) { "nerdctl.exe" } else { "nerdctl" })
-            .arg("info")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        Command::new(if cfg!(windows) {
+            "nerdctl.exe"
+        } else {
+            "nerdctl"
+        })
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
     }
 }
 
@@ -357,13 +448,24 @@ fn engine_tool_exists(command: &str) -> bool {
 }
 
 fn require(command: &str, guide: &str) -> Result<()> {
-    if command_exists(command) { Ok(()) } else { bail!("{guide}") }
+    if command_exists(command) {
+        Ok(())
+    } else {
+        bail!("{guide}")
+    }
 }
 
 fn run(command: &str, args: &[&str]) -> Result<()> {
     println!("GRID Engine install: {command} {}", args.join(" "));
-    let status = Command::new(command).args(args).status().with_context(|| format!("start {command}"))?;
-    if status.success() { Ok(()) } else { bail!("{command} failed with {status}. Resolve the platform prerequisite and rerun `grid engine install`.") }
+    let status = Command::new(command)
+        .args(args)
+        .status()
+        .with_context(|| format!("start {command}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        bail!("{command} failed with {status}. Resolve the platform prerequisite and rerun `grid engine install`.")
+    }
 }
 
 pub fn volume_root(config_dir: &Path) -> PathBuf {
@@ -386,7 +488,12 @@ fn volume_mount_path(config_dir: &Path, name: &str) -> PathBuf {
 
 fn volume_name(name: &str) -> Result<String> {
     let value = name.trim().to_ascii_lowercase();
-    if value.is_empty() || value.len() > 48 || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if value.is_empty()
+        || value.len() > 48
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         bail!("volume name must be 1-48 characters: a-z, 0-9, - or _");
     }
     Ok(value)
@@ -398,8 +505,11 @@ fn volume_name(name: &str) -> Result<String> {
 pub async fn prepare_volume(config_dir: &Path, name: &str) -> Result<VolumeMetadata> {
     let name = volume_name(name)?;
     let dir = volume_root(config_dir).join(&name);
-    if dir.exists() { bail!("volume {name} already exists; refusing to overwrite"); }
-    let dek = crate::passkey::require_unlocked(config_dir, "create encrypted Engine volume").await?;
+    if dir.exists() {
+        bail!("volume {name} already exists; refusing to overwrite");
+    }
+    let dek =
+        crate::passkey::require_unlocked(config_dir, "create encrypted Engine volume").await?;
     let mut volume_key = [0u8; 32];
     OsRng.fill_bytes(&mut volume_key);
     let wrapped = crate::passkey::encrypt_with_vault(&dek, &volume_key)?;
@@ -424,7 +534,10 @@ pub async fn prepare_volume(config_dir: &Path, name: &str) -> Result<VolumeMetad
         backend: "pending-encrypted-mount".into(),
         created_at: chrono::Utc::now().to_rfc3339(),
     };
-    fs::write(dir.join("volume.json"), serde_json::to_string_pretty(&metadata)?)?;
+    fs::write(
+        dir.join("volume.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
     Ok(metadata)
 }
 
@@ -441,18 +554,25 @@ pub fn volume_status(config_dir: &Path, name: &str) -> Result<VolumeMetadata> {
 }
 
 pub fn scaffold_web_service(path: &Path, name: &str, repository: &str) -> Result<()> {
-    if path.exists() { bail!("{} already exists; refusing to overwrite", path.display()); }
+    if path.exists() {
+        bail!("{} already exists; refusing to overwrite", path.display());
+    }
     if !valid_git_url(repository) {
         bail!("repository must be a whitespace-free HTTPS or SSH Git URL");
     }
     let manifest = WebServiceManifest {
         api_version: "grid/v1alpha1".into(),
         kind: "GridWebService".into(),
-        metadata: EngineMetadata { name: volume_name(name)? },
+        metadata: EngineMetadata {
+            name: volume_name(name)?,
+        },
         spec: WebServiceSpec {
             // The private registry promotion step resolves this to an immutable digest.
             image: "caddy:2-alpine".into(),
-            git: GitSource { repository: repository.into(), branch: default_branch() },
+            git: GitSource {
+                repository: repository.into(),
+                branch: default_branch(),
+            },
             volume: name.into(),
             exposure: "grid-tunnel".into(),
             service_port: default_service_port(),
@@ -465,11 +585,21 @@ pub fn scaffold_web_service(path: &Path, name: &str, repository: &str) -> Result
 pub fn load_web_service(path: &Path) -> Result<WebServiceManifest> {
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let m: WebServiceManifest = serde_yaml::from_str(&raw).context("invalid web service YAML")?;
-    if m.api_version != "grid/v1alpha1" || m.kind != "GridWebService" { bail!("expected apiVersion grid/v1alpha1 and kind GridWebService"); }
-    if m.spec.image != "caddy:2-alpine" { bail!("phase 1 web services require exactly caddy:2-alpine"); }
-    if m.spec.exposure != "grid-tunnel" { bail!("web services must use exposure: grid-tunnel; direct host ports are forbidden"); }
-    if m.spec.service_port != default_service_port() { bail!("web services must use the GRID service port"); }
-    if !valid_git_url(&m.spec.git.repository) { bail!("git.repository must be a whitespace-free HTTPS or SSH URL"); }
+    if m.api_version != "grid/v1alpha1" || m.kind != "GridWebService" {
+        bail!("expected apiVersion grid/v1alpha1 and kind GridWebService");
+    }
+    if m.spec.image != "caddy:2-alpine" {
+        bail!("phase 1 web services require exactly caddy:2-alpine");
+    }
+    if m.spec.exposure != "grid-tunnel" {
+        bail!("web services must use exposure: grid-tunnel; direct host ports are forbidden");
+    }
+    if m.spec.service_port != default_service_port() {
+        bail!("web services must use the GRID service port");
+    }
+    if !valid_git_url(&m.spec.git.repository) {
+        bail!("git.repository must be a whitespace-free HTTPS or SSH URL");
+    }
     if m.spec.volume != m.metadata.name {
         bail!("phase 1 requires one dedicated encrypted volume named exactly like the service");
     }
@@ -489,39 +619,81 @@ pub fn load_web_service(path: &Path) -> Result<WebServiceManifest> {
 
 fn valid_git_url(value: &str) -> bool {
     !value.contains(char::is_whitespace)
-        && (value.starts_with("https://") || value.starts_with("ssh://") || value.starts_with("git@"))
+        && (value.starts_with("https://")
+            || value.starts_with("ssh://")
+            || value.starts_with("git@"))
 }
 
-pub async fn create_service_deploy_key(config_dir: &Path, service: &str, repository: &str) -> Result<ServiceDeployKey> {
+pub async fn create_service_deploy_key(
+    config_dir: &Path,
+    service: &str,
+    repository: &str,
+) -> Result<ServiceDeployKey> {
     let service = volume_name(service)?;
-    if !valid_git_url(repository) { bail!("repository must be a whitespace-free HTTPS or SSH Git URL"); }
-    require("ssh-keygen", "Install OpenSSH (ssh-keygen) before creating a deploy key.")?;
+    if !valid_git_url(repository) {
+        bail!("repository must be a whitespace-free HTTPS or SSH Git URL");
+    }
+    require(
+        "ssh-keygen",
+        "Install OpenSSH (ssh-keygen) before creating a deploy key.",
+    )?;
     let root = config_dir.join("engine").join("services").join(&service);
     let private_path = root.join("deploy.key.enc");
-    if private_path.exists() { bail!("a deploy key already exists for {service}; refusing to overwrite"); }
+    if private_path.exists() {
+        bail!("a deploy key already exists for {service}; refusing to overwrite");
+    }
     fs::create_dir_all(&root)?;
     let tmp = root.join(format!(".keygen-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&tmp)?;
     #[cfg(unix)]
-    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700))?; }
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700))?;
+    }
     let generated = tmp.join("id_ed25519");
     let status = Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-C", &format!("grid-engine:{service}"), "-f"])
+        .args([
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            &format!("grid-engine:{service}"),
+            "-f",
+        ])
         .arg(&generated)
         .status()
         .context("generate SSH deploy key")?;
-    if !status.success() { let _ = fs::remove_dir_all(&tmp); bail!("ssh-keygen failed"); }
+    if !status.success() {
+        let _ = fs::remove_dir_all(&tmp);
+        bail!("ssh-keygen failed");
+    }
     let mut private = fs::read(&generated)?;
-    let public = fs::read_to_string(generated.with_extension("pub"))?.trim().to_string();
+    let public = fs::read_to_string(generated.with_extension("pub"))?
+        .trim()
+        .to_string();
     let dek = crate::passkey::require_unlocked(config_dir, "encrypt Engine deploy key").await?;
     let sealed = crate::passkey::encrypt_with_vault(&dek, &private)?;
     private.zeroize();
     fs::write(&private_path, sealed)?;
     #[cfg(unix)]
-    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&private_path, fs::Permissions::from_mode(0o600))?; }
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&private_path, fs::Permissions::from_mode(0o600))?;
+    }
     fs::remove_dir_all(&tmp)?;
-    let key = ServiceDeployKey { service, repository: repository.into(), public_key: public, private_key_path: private_path.display().to_string(), created_at: chrono::Utc::now().to_rfc3339() };
-    fs::write(root.join("deploy-key.json"), serde_json::to_string_pretty(&key)?)?;
+    let key = ServiceDeployKey {
+        service,
+        repository: repository.into(),
+        public_key: public,
+        private_key_path: private_path.display().to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    fs::write(
+        root.join("deploy-key.json"),
+        serde_json::to_string_pretty(&key)?,
+    )?;
     Ok(key)
 }
 
@@ -641,8 +813,12 @@ async fn mount_volume(volume: &VolumeMetadata, dek: &[u8; 32]) -> Result<()> {
     } else {
         vec!["-q", "--", &volume.encrypted_path, &volume.mount_path]
     };
-    let mount_result =
-        run_with_secret_stdin("gocryptfs", &mount_args, &passphrase, cfg!(target_os = "macos"));
+    let mount_result = run_with_secret_stdin(
+        "gocryptfs",
+        &mount_args,
+        &passphrase,
+        cfg!(target_os = "macos"),
+    );
     passphrase.zeroize();
     mount_result?;
     Ok(())
@@ -712,51 +888,52 @@ fn sync_repository(
             "private SSH repository requires a per-service deploy key; run `grid engine service key-create`"
         );
     }
-    with_ephemeral_deploy_key(
-        config_dir,
-        &manifest.metadata.name,
-        dek,
-        |deploy_key| {
-            let ssh_command = deploy_key.map(|path| {
-                format!(
-                    "ssh -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new",
-                    shell_quote(&path.display().to_string())
-                )
-            });
-            if !source.join(".git").exists() {
-                let mut cmd = engine_git_command(ssh_command.as_deref());
-                let status = cmd
-                    .args(["clone", "--depth", "1", "--branch", &manifest.spec.git.branch])
-                    .arg(&manifest.spec.git.repository)
-                    .arg(source)
-                    .status()
-                    .context("clone service repository")?;
-                if !status.success() {
-                    bail!("Git clone failed");
-                }
-            } else {
-                let mut cmd = engine_git_command(ssh_command.as_deref());
-                let status = cmd
-                    .arg("-C")
-                    .arg(source)
-                    .args(["pull", "--ff-only", "origin", &manifest.spec.git.branch])
-                    .status()
-                    .context("update service repository")?;
-                if !status.success() {
-                    bail!("Git fast-forward update failed");
-                }
+    with_ephemeral_deploy_key(config_dir, &manifest.metadata.name, dek, |deploy_key| {
+        let ssh_command = deploy_key.map(|path| {
+            format!(
+                "ssh -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new",
+                shell_quote(&path.display().to_string())
+            )
+        });
+        if !source.join(".git").exists() {
+            let mut cmd = engine_git_command(ssh_command.as_deref());
+            let status = cmd
+                .args([
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    &manifest.spec.git.branch,
+                ])
+                .arg(&manifest.spec.git.repository)
+                .arg(source)
+                .status()
+                .context("clone service repository")?;
+            if !status.success() {
+                bail!("Git clone failed");
             }
-            let output = engine_git_command(None)
+        } else {
+            let mut cmd = engine_git_command(ssh_command.as_deref());
+            let status = cmd
                 .arg("-C")
                 .arg(source)
-                .args(["rev-parse", "HEAD"])
-                .output()?;
-            if !output.status.success() {
-                bail!("cannot determine deployed Git commit");
+                .args(["pull", "--ff-only", "origin", &manifest.spec.git.branch])
+                .status()
+                .context("update service repository")?;
+            if !status.success() {
+                bail!("Git fast-forward update failed");
             }
-            Ok(String::from_utf8(output.stdout)?.trim().to_string())
-        },
-    )
+        }
+        let output = engine_git_command(None)
+            .arg("-C")
+            .arg(source)
+            .args(["rev-parse", "HEAD"])
+            .output()?;
+        if !output.status.success() {
+            bail!("cannot determine deployed Git commit");
+        }
+        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    })
 }
 
 fn engine_git_command(ssh_command: Option<&str>) -> Command {
@@ -782,10 +959,7 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-pub async fn deploy_web_service(
-    config_dir: &Path,
-    manifest_path: &Path,
-) -> Result<ServiceRuntime> {
+pub async fn deploy_web_service(config_dir: &Path, manifest_path: &Path) -> Result<ServiceRuntime> {
     let manifest = load_web_service(manifest_path)?;
     if !crate::compute::containerd_available().await {
         bail!("containerd/nerdctl unavailable; run `grid engine install`");
@@ -793,8 +967,7 @@ pub async fn deploy_web_service(
     let service = manifest.metadata.name.clone();
     fs::create_dir_all(service_root(config_dir, &service)?)?;
     let existing_receipt = runtime_path(config_dir, &service)?;
-    if existing_receipt.exists()
-        && service_status(config_dir, &service)?.state == "running-private"
+    if existing_receipt.exists() && service_status(config_dir, &service)?.state == "running-private"
     {
         bail!("service {service} is already running; stop it before redeploying");
     }
@@ -855,8 +1028,7 @@ pub async fn deploy_web_service(
             receipt_signature: String::new(),
         };
         let unsigned = serde_json::to_vec(&runtime)?;
-        runtime.receipt_signature =
-            crate::passkey::sign_operator(config_dir, &dek, &unsigned)?;
+        runtime.receipt_signature = crate::passkey::sign_operator(config_dir, &dek, &unsigned)?;
         fs::write(
             runtime_path(config_dir, &service)?,
             serde_json::to_vec_pretty(&runtime)?,
@@ -872,9 +1044,10 @@ pub async fn deploy_web_service(
 
 pub fn service_status(config_dir: &Path, service: &str) -> Result<ServiceRuntime> {
     let path = runtime_path(config_dir, service)?;
-    let runtime: ServiceRuntime =
-        serde_json::from_slice(&fs::read(&path).with_context(|| format!("missing {}", path.display()))?)
-            .context("invalid Engine runtime receipt")?;
+    let runtime: ServiceRuntime = serde_json::from_slice(
+        &fs::read(&path).with_context(|| format!("missing {}", path.display()))?,
+    )
+    .context("invalid Engine runtime receipt")?;
     let mut unsigned = runtime.clone();
     let signature = std::mem::take(&mut unsigned.receipt_signature);
     crate::passkey::verify_operator_sig(
@@ -987,7 +1160,8 @@ pub async fn reveal_private_capability(
     if client_key.len() != 32 {
         bail!("assigned client public key must be 32-byte hex");
     }
-    let dek = crate::passkey::require_unlocked(config_dir, "reveal private service capability").await?;
+    let dek =
+        crate::passkey::require_unlocked(config_dir, "reveal private service capability").await?;
     let mut raw = crate::passkey::decrypt_with_vault(
         &dek,
         &fs::read(capability_path(config_dir, service)?)?,
@@ -1033,18 +1207,49 @@ mod tests {
         fs::write(
             root.join("tunnel-capability.json"),
             serde_json::to_vec(&verifier).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         let token = hex::encode(capability);
         let signature = hex::encode(
             signing
                 .sign(&tunnel_authorization_message(service, &token))
                 .to_bytes(),
         );
-        assert!(!consume_private_capability(dir.path(), "site-b", &token, &client_pubkey, &signature));
-        assert!(!consume_private_capability(dir.path(), service, "not-hex", &client_pubkey, &signature));
-        assert!(!consume_private_capability(dir.path(), service, &token, &"22".repeat(32), &signature));
-        assert!(consume_private_capability(dir.path(), service, &token, &client_pubkey, &signature));
-        assert!(!consume_private_capability(dir.path(), service, &token, &client_pubkey, &signature));
+        assert!(!consume_private_capability(
+            dir.path(),
+            "site-b",
+            &token,
+            &client_pubkey,
+            &signature
+        ));
+        assert!(!consume_private_capability(
+            dir.path(),
+            service,
+            "not-hex",
+            &client_pubkey,
+            &signature
+        ));
+        assert!(!consume_private_capability(
+            dir.path(),
+            service,
+            &token,
+            &"22".repeat(32),
+            &signature
+        ));
+        assert!(consume_private_capability(
+            dir.path(),
+            service,
+            &token,
+            &client_pubkey,
+            &signature
+        ));
+        assert!(!consume_private_capability(
+            dir.path(),
+            service,
+            &token,
+            &client_pubkey,
+            &signature
+        ));
     }
 
     #[test]

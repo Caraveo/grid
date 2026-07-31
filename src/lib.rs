@@ -5,6 +5,8 @@
 //! ```
 
 pub mod address;
+pub mod arc_pairing;
+pub mod arc_protocol;
 pub mod banner;
 pub mod bench;
 pub mod blockchain;
@@ -16,8 +18,8 @@ pub mod consensus;
 pub mod coord;
 pub mod crypto;
 pub mod earn;
-pub mod engine;
 pub mod ember;
+pub mod engine;
 pub mod executor;
 pub mod wallet;
 

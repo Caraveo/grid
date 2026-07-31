@@ -1,6 +1,6 @@
 [package]
 name = "grid"
-version = "0.2.20"
+version = "0.2.21"
 edition = "2021"
 authors = ["GRID Contributors"]
 description = "GRID Phase 1 — useful mining CLI (Bitcoin TSL, PoR earn)"
@@ -52,6 +52,11 @@ webauthn-rs = { version = "0.5", default-features = true, features = [
 # Pulled transitively by webauthn-rs; explicit feature forces static openssl.
 openssl = { version = "0.10", features = ["vendored"] }
 snow = "0.9"
+x25519-dalek = "2"
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+qrcode = "0.14"
 
 [dev-dependencies]
 tempfile = "3.10"

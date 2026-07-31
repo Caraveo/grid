@@ -14,8 +14,8 @@ mod tunnel;
 
 pub use allowlist::{ensure_allowlist, is_image_allowed, DEFAULT_IMAGES};
 pub use docker::{
-    containerd_available, logs as container_logs, rm_container, run_caddy_service,
-    stop_container, ContainerdError,
+    containerd_available, logs as container_logs, rm_container, run_caddy_service, stop_container,
+    ContainerdError,
 };
 pub use manifest::{
     compute_dir, export_compute, import_compute, list_computes, load_manifest, load_status,

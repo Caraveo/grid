@@ -56,6 +56,9 @@ pub struct ChainState {
     /// On-chain account balances by grid0 address.
     #[serde(default)]
     pub accounts: HashMap<String, f64>,
+    /// Last accepted Arc transaction nonce by sender address.
+    #[serde(default)]
+    pub account_nonces: HashMap<String, u64>,
     #[serde(default)]
     pub txs: Vec<ChainTx>,
     /// job_id → claimed|burned
@@ -129,6 +132,7 @@ impl Default for ChainState {
             epoch_minted: 0.0,
             unclaimed: vec![],
             accounts: HashMap::new(),
+            account_nonces: HashMap::new(),
             txs: vec![],
             settled_jobs: HashMap::new(),
             updated_at: now_rfc(),
@@ -181,6 +185,26 @@ impl ChainState {
         let total_headroom = (self.max_supply - self.circulating()).max(0.0);
         let compute_issued = (self.total_minted - self.total_burned).max(0.0);
         total_headroom.min((COMPUTE_ALLOCATION - compute_issued).max(0.0))
+    }
+
+    pub fn next_account_nonce(&self, address: &str) -> Result<u64> {
+        let address = normalize_address(address)?;
+        Ok(self
+            .account_nonces
+            .get(&address)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1))
+    }
+
+    pub fn commit_account_nonce(&mut self, address: &str, nonce: u64) -> Result<()> {
+        let address = normalize_address(address)?;
+        let expected = self.next_account_nonce(&address)?;
+        if nonce != expected {
+            bail!("invalid nonce: expected {expected}");
+        }
+        self.account_nonces.insert(address, nonce);
+        Ok(())
     }
 
     fn refresh_emission_epoch(&mut self) {
@@ -1000,6 +1024,19 @@ mod tests {
         c.total_burned = 50.0;
         let m2 = c.mint_unclaimed("n", "j2", 50.0, "c");
         assert!((m2 - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn account_nonce_is_monotonic_and_replay_safe() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
+        let address =
+            crate::address::encode_payment(key.verifying_key().as_bytes()).expect("address");
+        let mut chain = ChainState::default();
+        assert_eq!(chain.next_account_nonce(&address).unwrap(), 1);
+        chain.commit_account_nonce(&address, 1).unwrap();
+        assert_eq!(chain.next_account_nonce(&address).unwrap(), 2);
+        assert!(chain.commit_account_nonce(&address, 1).is_err());
+        assert!(chain.commit_account_nonce(&address, 3).is_err());
     }
 
     #[test]

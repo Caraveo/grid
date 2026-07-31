@@ -4,7 +4,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::blockchain::{block_hash, ChainReplica, Settlement, SettlementAllocation, SettlementNode};
+use crate::blockchain::{
+    block_hash, ChainReplica, Settlement, SettlementAllocation, SettlementNode,
+};
 use crate::chain::ChainState;
 
 use super::GenesisKeys;
@@ -175,9 +177,7 @@ async fn produce_once(
     }
 
     let response = client
-        .get(format!(
-            "{coordinator}/v1/chain/settlements?limit={batch}"
-        ))
+        .get(format!("{coordinator}/v1/chain/settlements?limit={batch}"))
         .bearer_auth(&opts.secret)
         .send()
         .await
@@ -223,7 +223,15 @@ async fn produce_once(
     replica.save(&opts.config_dir)?;
     state.save(&opts.config_dir)?;
 
-    acknowledge_block(client, coordinator, &opts.secret, &replica.chain_id, &block, &hash).await?;
+    acknowledge_block(
+        client,
+        coordinator,
+        &opts.secret,
+        &replica.chain_id,
+        &block,
+        &hash,
+    )
+    .await?;
     Ok(Some((block.height, hash, block.settlements.len())))
 }
 
@@ -253,7 +261,11 @@ async fn reconcile_blocks(
             replica.tip().height
         );
     }
-    for block in replica.blocks.iter().filter(|block| block.height > status.height) {
+    for block in replica
+        .blocks
+        .iter()
+        .filter(|block| block.height > status.height)
+    {
         if block.settlements.is_empty() {
             bail!(
                 "cannot reconcile local block {} without settlement identifiers",
@@ -261,15 +273,7 @@ async fn reconcile_blocks(
             );
         }
         let hash = block_hash(block)?;
-        acknowledge_block(
-            client,
-            coordinator,
-            secret,
-            &replica.chain_id,
-            block,
-            &hash,
-        )
-        .await?;
+        acknowledge_block(client, coordinator, secret, &replica.chain_id, block, &hash).await?;
     }
     Ok(())
 }

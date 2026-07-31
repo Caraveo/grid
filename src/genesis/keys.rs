@@ -126,11 +126,7 @@ pub fn load_protected(config_dir: &Path, dek: &[u8; 32]) -> Result<GenesisKeys> 
 ///
 /// Recovery keys remain encrypted and are never exported. This is intended for
 /// provisioning a dedicated leader host after a fresh local vault authorization.
-pub fn export_operational_key(
-    config_dir: &Path,
-    dek: &[u8; 32],
-    output: &Path,
-) -> Result<()> {
+pub fn export_operational_key(config_dir: &Path, dek: &[u8; 32], output: &Path) -> Result<()> {
     if output.exists() {
         anyhow::bail!(
             "operational key already exists at {} — refuse to overwrite",

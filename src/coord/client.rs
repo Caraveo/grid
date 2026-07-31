@@ -56,8 +56,10 @@ impl CoordinatorClient {
         }
         if let Some(metrics) = metrics {
             let gpu_count = if gpu_model.trim().is_empty()
-                || matches!(gpu_model.trim().to_ascii_lowercase().as_str(), "cpu" | "none" | "n/a")
-            {
+                || matches!(
+                    gpu_model.trim().to_ascii_lowercase().as_str(),
+                    "cpu" | "none" | "n/a"
+                ) {
                 0
             } else {
                 gpu_model

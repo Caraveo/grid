@@ -24,8 +24,8 @@ pub const CANONICAL_LEADER_PUBKEY: &str =
     "bed7a2831dadf92016a480a6e2ae2ff77b745c6baac729387f4b1044bd158513";
 
 pub use keys::{
-    export_operational_key, export_pubkey_hex, generate_keypair, generate_protected, load_authority,
-    load_keypair, load_protected, GenesisAuthority, GenesisKeys,
+    export_operational_key, export_pubkey_hex, generate_keypair, generate_protected,
+    load_authority, load_keypair, load_protected, GenesisAuthority, GenesisKeys,
 };
 pub use producer::{run_block_producer, ProducerOptions};
 pub use server::run_genesis_server;

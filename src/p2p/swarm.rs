@@ -540,9 +540,9 @@ async fn handle_connection(
                 request_id,
             } => {
                 let runtime = crate::engine::service_status(&opts.config_dir, &service).ok();
-                let eligible = runtime
-                    .as_ref()
-                    .is_some_and(|state| state.state == "running-private" && !state.public_exposure);
+                let eligible = runtime.as_ref().is_some_and(|state| {
+                    state.state == "running-private" && !state.public_exposure
+                });
                 if !eligible {
                     tx.send(Message::TunnelResult {
                         request_id,
@@ -573,7 +573,8 @@ async fn handle_connection(
                     .ok();
                     continue;
                 }
-                let (mut local_reader, local_writer) = local.expect("checked local stream").into_split();
+                let (mut local_reader, local_writer) =
+                    local.expect("checked local stream").into_split();
                 tunnel_writers.insert(request_id.clone(), local_writer);
                 tx.send(Message::TunnelResult {
                     request_id: request_id.clone(),
@@ -611,7 +612,10 @@ async fn handle_connection(
                 reason,
             } => {
                 if !accepted {
-                    debug!("private tunnel {request_id} refused: {}", reason.unwrap_or_else(|| "policy".into()));
+                    debug!(
+                        "private tunnel {request_id} refused: {}",
+                        reason.unwrap_or_else(|| "policy".into())
+                    );
                 }
             }
             Message::TunnelData { request_id, data } => {

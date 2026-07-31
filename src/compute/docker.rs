@@ -147,7 +147,10 @@ pub async fn run_caddy_service(
         .await
         .context("pull approved Caddy image")?;
     if !pull.status.success() {
-        bail!("cannot pull {image}: {}", String::from_utf8_lossy(&pull.stderr));
+        bail!(
+            "cannot pull {image}: {}",
+            String::from_utf8_lossy(&pull.stderr)
+        );
     }
     let inspect = nerdctl_async_command()
         .args([
@@ -170,9 +173,7 @@ pub async fn run_caddy_service(
     if digest_hex.len() != 64 || !digest_hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("container runtime returned an invalid Caddy sha256 digest");
     }
-    let _ = nerdctl_command()
-        .args(["rm", "-f", &cname])
-        .status();
+    let _ = nerdctl_command().args(["rm", "-f", &cname]).status();
     let source = source
         .canonicalize()
         .with_context(|| format!("canonicalize {}", source.display()))?;
@@ -282,15 +283,11 @@ pub async fn run_job(spec: &ContainerJobSpec) -> Result<(bool, String, u64)> {
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
-            let _ = nerdctl_command()
-                .args(["rm", "-f", &cname])
-                .status();
+            let _ = nerdctl_command().args(["rm", "-f", &cname]).status();
             bail!("containerd/nerdctl wait: {e}");
         }
         Err(_) => {
-            let _ = nerdctl_command()
-                .args(["rm", "-f", &cname])
-                .status();
+            let _ = nerdctl_command().args(["rm", "-f", &cname]).status();
             return Ok((
                 false,
                 format!("timeout after {}s", spec.timeout_sec),
