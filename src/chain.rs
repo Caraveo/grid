@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::address::{is_valid_address, normalize_address};
+use crate::blockchain::ChainReplica;
 
 /// Hard ceiling on circulating GRID.
 /// Compute-reward allocation enforced by the pilot reward ledger.
@@ -793,13 +794,38 @@ pub fn security_audit(config_dir: &Path) -> Vec<SecFinding> {
         });
     }
 
-    // phase-1 single-operator truth disclaimer
-    out.push(SecFinding {
-        level: SecLevel::Warn,
-        code: "model.local",
-        message: "phase-1 chain is local single-operator truth (not a multi-node consensus ledger)"
-            .into(),
-    });
+    // Canonical network truth is the signed Genesis replica. Local chain.json
+    // remains operational state, so report the model based on actual evidence
+    // instead of emitting an unconditional warning on every healthy peer.
+    match ChainReplica::load(config_dir) {
+        Ok(Some(replica)) => match replica.verify() {
+            Ok(()) => out.push(SecFinding {
+                level: SecLevel::Ok,
+                code: "model.genesis",
+                message: format!(
+                    "following Genesis-signed canonical chain {} at height {}; local chain data is operational state",
+                    replica.chain_id,
+                    replica.tip().height
+                ),
+            }),
+            Err(error) => out.push(SecFinding {
+                level: SecLevel::Fail,
+                code: "model.replica",
+                message: format!("Genesis-signed chain replica failed verification: {error}"),
+            }),
+        },
+        Ok(None) => out.push(SecFinding {
+            level: SecLevel::Warn,
+            code: "model.replica",
+            message: "no Genesis-signed chain replica is stored yet; start the node and verify Genesis connectivity"
+                .into(),
+        }),
+        Err(error) => out.push(SecFinding {
+            level: SecLevel::Fail,
+            code: "model.replica",
+            message: format!("could not load Genesis-signed chain replica: {error}"),
+        }),
+    }
 
     // --- keys / secrets under config dir ---
     audit_path_perms(&mut out, config_dir.join("keys"), "keys.dir", true);
@@ -954,7 +980,12 @@ pub fn print_status_blockchain(config_dir: &Path) {
         println!("  updated:      {}", stats.updated_at);
     }
     println!("  burn rule:    unclaimed mint >{BURN_DEADLINE_DAYS}d burned by chain protocol");
-    println!("  model:        phase-1 local single-operator truth");
+    if let Some(model) = findings
+        .iter()
+        .find(|finding| finding.code.starts_with("model."))
+    {
+        println!("  model:        {}", model.message);
+    }
 
     println!();
     println!("=== Security check ===");
@@ -1061,6 +1092,32 @@ mod tests {
             findings
                 .iter()
                 .any(|f| f.code == "supply.ledger" && f.level == SecLevel::Ok),
+            "{findings:?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "model.replica" && f.level == SecLevel::Warn),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn security_audit_accepts_verified_genesis_replica() {
+        let dir = tempdir().unwrap();
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[11u8; 32]);
+        let keys = crate::genesis::GenesisKeys {
+            verifying: signing.verifying_key(),
+            signing,
+        };
+        let replica = crate::blockchain::ChainReplica::create_genesis(&keys, vec![]).unwrap();
+        replica.save(dir.path()).unwrap();
+
+        let findings = security_audit(dir.path());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "model.genesis" && f.level == SecLevel::Ok),
             "{findings:?}"
         );
     }
