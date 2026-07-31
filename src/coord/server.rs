@@ -142,7 +142,9 @@ struct LauncherTrust {
     pub ban_reason: Option<String>,
 }
 
-fn launcher_neutral() -> f64 { 1.0 }
+fn launcher_neutral() -> f64 {
+    1.0
+}
 
 fn valid_launcher_key(key: &str) -> bool {
     key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
@@ -450,27 +452,50 @@ async fn create_job(
     });
     let launcher = body.launcher_pubkey.map(|k| k.to_lowercase());
     if kind == JobKind::ContainerWork && !launcher.as_deref().is_some_and(valid_launcher_key) {
-        return Err((StatusCode::FORBIDDEN, "container jobs require a 32-byte launcher public key".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "container jobs require a 32-byte launcher public key".into(),
+        ));
     }
     if let Some(ref key) = launcher {
         if !valid_launcher_key(key) {
-            return Err((StatusCode::BAD_REQUEST, "launcher public key must be 32-byte hex".into()));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "launcher public key must be 32-byte hex".into(),
+            ));
         }
         let mut g = app.inner.lock();
-        let trust = g.launchers.entry(key.clone()).or_insert_with(|| LauncherTrust {
-            public_key: key.clone(), reputation: 1.0, rejected_requests: 0,
-            completed_jobs: 0, banned: false, ban_reason: None,
-        });
+        let trust = g
+            .launchers
+            .entry(key.clone())
+            .or_insert_with(|| LauncherTrust {
+                public_key: key.clone(),
+                reputation: 1.0,
+                rejected_requests: 0,
+                completed_jobs: 0,
+                banned: false,
+                ban_reason: None,
+            });
         if trust.banned {
-            return Err((StatusCode::FORBIDDEN, format!("launcher banned: {}", trust.ban_reason.as_deref().unwrap_or("policy"))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!(
+                    "launcher banned: {}",
+                    trust.ban_reason.as_deref().unwrap_or("policy")
+                ),
+            ));
         }
         if kind == JobKind::ContainerWork && host_escape_attempt(&payload) {
             trust.rejected_requests += 1;
             trust.reputation = 0.0;
             trust.banned = true;
-            trust.ban_reason = Some("attempted container host escape or privilege elevation".into());
+            trust.ban_reason =
+                Some("attempted container host escape or privilege elevation".into());
             g.dirty = true;
-            return Err((StatusCode::FORBIDDEN, "launcher banned: host escape controls are forbidden".into()));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "launcher banned: host escape controls are forbidden".into(),
+            ));
         }
     }
     // Validate payload early
@@ -565,6 +590,9 @@ struct ClaimBody {
     /// `host` | `mine` | `both` (default both for back-compat)
     #[serde(default)]
     track: Option<String>,
+    /// Required since v0.2.24. Missing versions from older clients fail closed.
+    #[serde(default)]
+    cli_version: String,
 }
 
 fn track_matches(job_kind: &str, want: &str) -> bool {
@@ -583,6 +611,18 @@ fn track_matches(job_kind: &str, want: &str) -> bool {
 }
 
 async fn claim(State(app): State<App>, Json(body): Json<ClaimBody>) -> impl IntoResponse {
+    let minimum = crate::version_gate::configured_minimum();
+    if let Err(error) = crate::version_gate::require_minimum(&body.cli_version, &minimum) {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            Json(serde_json::json!({
+                "error": error.to_string(),
+                "currentVersion": body.cli_version,
+                "minimumVersion": minimum,
+            })),
+        )
+            .into_response();
+    }
     let mut g = app.inner.lock();
     if !g.nodes.contains_key(&body.node_id) {
         return (
@@ -687,7 +727,9 @@ fn queue_devnet_solana_reward(
                     Ok(body) => tracing::info!(
                         "Solana devnet GRID minted job={} signature={} explorer={}",
                         job_id,
-                        body.get("signature").and_then(|v| v.as_str()).unwrap_or("?"),
+                        body.get("signature")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?"),
                         body.get("explorer").and_then(|v| v.as_str()).unwrap_or("?"),
                     ),
                     Err(error) => tracing::warn!("Solana reward response decode failed: {error}"),
@@ -768,7 +810,11 @@ async fn complete_job(
             node.reputation = (node.reputation - 0.15).max(0.5);
         }
     }
-    if let Some(key) = g.jobs.get(&body.job_id).and_then(|j| j.launcher_pubkey.clone()) {
+    if let Some(key) = g
+        .jobs
+        .get(&body.job_id)
+        .and_then(|j| j.launcher_pubkey.clone())
+    {
         if let Some(launcher) = g.launchers.get_mut(&key) {
             if verified {
                 launcher.completed_jobs += 1;
@@ -846,12 +892,7 @@ async fn complete_job(
         body.solana_reward_wallet
             .clone()
             .map(|wallet| {
-                queue_devnet_solana_reward(
-                    body.job_id.clone(),
-                    wallet,
-                    earn,
-                    commit.clone(),
-                )
+                queue_devnet_solana_reward(body.job_id.clone(), wallet, earn, commit.clone())
             })
             .unwrap_or(false)
     } else {

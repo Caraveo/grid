@@ -380,7 +380,10 @@ async fn network_snapshot(config_dir: &Path) -> NetworkSnapshot {
         }
     };
     let response = match client
-        .get(format!("{}/health", settings.truth_url.trim_end_matches('/')))
+        .get(format!(
+            "{}/health",
+            settings.truth_url.trim_end_matches('/')
+        ))
         .send()
         .await
     {
@@ -419,7 +422,9 @@ async fn network_snapshot(config_dir: &Path) -> NetworkSnapshot {
         snapshot.connected
     };
     if snapshot.connected && !snapshot.trusted {
-        snapshot.error = Some("Genesis responded, but its leader key does not match the pinned GRID authority".into());
+        snapshot.error = Some(
+            "Genesis responded, but its leader key does not match the pinned GRID authority".into(),
+        );
     }
     snapshot
 }

@@ -81,7 +81,11 @@ async fn run_operator(
         println!("  operator     {short}…");
     }
     if let Some(ref wallet) = solana_reward_wallet {
-        let short = if wallet.len() > 16 { &wallet[..16] } else { wallet };
+        let short = if wallet.len() > 16 {
+            &wallet[..16]
+        } else {
+            wallet
+        };
         println!("  solana       {short}… (devnet rewards)");
     } else {
         println!("  solana       off (run grid init with --solana-wallet)");

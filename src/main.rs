@@ -30,6 +30,36 @@ const DEFAULT_GENESIS_PEER: &str = grid::genesis::CANONICAL_P2P_PEER;
 const DEFAULT_GENESIS_URL: &str = grid::genesis::CANONICAL_TRUTH_URL;
 const DEFAULT_GENESIS_PUBKEY: &str = grid::genesis::CANONICAL_LEADER_PUBKEY;
 
+async fn require_current_operator_cli() -> Result<()> {
+    let endpoint =
+        std::env::var("GRID_GENESIS").unwrap_or_else(|_| DEFAULT_GENESIS_URL.to_string());
+    let skip = std::env::var("GRID_DEV_SKIP_VERSION_GATE").ok().as_deref() == Some("1");
+    if skip {
+        if endpoint.trim_end_matches('/') == DEFAULT_GENESIS_URL.trim_end_matches('/') {
+            anyhow::bail!("GRID_DEV_SKIP_VERSION_GATE cannot bypass the canonical Genesis policy");
+        }
+        eprintln!("[WARN] development network CLI version gate bypassed");
+        return Ok(());
+    }
+    let expected_key =
+        if endpoint.trim_end_matches('/') == DEFAULT_GENESIS_URL.trim_end_matches('/') {
+            Some(DEFAULT_GENESIS_PUBKEY)
+        } else {
+            None
+        };
+    let truth = grid::genesis::fetch_truth(&endpoint, expected_key).await?;
+    grid::version_gate::require_minimum(
+        grid::version_gate::CURRENT_CLI_VERSION,
+        &truth.body.minimum_cli_version,
+    )?;
+    println!(
+        "✓ CLI policy verified: {} (network minimum {})",
+        grid::version_gate::CURRENT_CLI_VERSION,
+        truth.body.minimum_cli_version
+    );
+    Ok(())
+}
+
 #[derive(Parser)]
 #[command(name = "grid")]
 #[command(about = "GRID — host useful compute · mine security PoR · Bitcoin TSL")]
@@ -612,6 +642,12 @@ enum WalletCmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Pair this existing wallet to ARK with an encrypted one-time QR response
+    Pair {
+        /// Public `gridark://pair/v1/request?...` value shown by ARK.
+        /// Omit it to paste the request at the interactive prompt.
+        request: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -872,6 +908,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            require_current_operator_cli().await?;
             let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_engine_host(cfg, compute).await?;
@@ -888,6 +925,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            require_current_operator_cli().await?;
             let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_miner_node(
@@ -897,7 +935,8 @@ async fn main() -> Result<()> {
                 p2p_connect,
                 p2p_no_genesis,
                 p2p_noise_key_file,
-            ).await?;
+            )
+            .await?;
         }
 
         Commands::Compute { action } => match action {
@@ -978,6 +1017,7 @@ async fn main() -> Result<()> {
         } => {
             banner::print_mark();
             println!();
+            require_current_operator_cli().await?;
             let cfg = load_cfg(&config_dir, coordinator, id, class, gpu, poll_ms)?;
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             run_combined_node(
@@ -991,7 +1031,10 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Commands::Start { manifest, coordinator } => {
+        Commands::Start {
+            manifest,
+            coordinator,
+        } => {
             banner::print_mark();
             println!();
             let engine = manifest.as_deref().map(grid::engine::load).transpose()?;
@@ -1006,9 +1049,21 @@ async fn main() -> Result<()> {
             std::env::set_var("GRID_CONFIG_DIR", &config_dir);
             if let Some(ref m) = engine {
                 println!("GRID Engine manifest: {}", m.metadata.name);
-                println!("  runtime: {} CPU · {} MiB · job network={}", m.spec.runtime.cpus, m.spec.runtime.memory_mib, m.spec.runtime.network_for_jobs);
-                println!("  storage: encrypted persistent volumes · {} MiB quota", m.spec.storage.volume_quota_mib);
-                run_engine_peer(cfg, config_dir.clone(), m.spec.p2p.listen.clone(), m.spec.p2p.connect.clone()).await?;
+                println!(
+                    "  runtime: {} CPU · {} MiB · job network={}",
+                    m.spec.runtime.cpus, m.spec.runtime.memory_mib, m.spec.runtime.network_for_jobs
+                );
+                println!(
+                    "  storage: encrypted persistent volumes · {} MiB quota",
+                    m.spec.storage.volume_quota_mib
+                );
+                run_engine_peer(
+                    cfg,
+                    config_dir.clone(),
+                    m.spec.p2p.listen.clone(),
+                    m.spec.p2p.connect.clone(),
+                )
+                .await?;
                 return Ok(());
             }
             run_combined_node(
@@ -1025,48 +1080,68 @@ async fn main() -> Result<()> {
         Commands::Engine { action } => match action {
             EngineCmd::Doctor => grid::engine::doctor(),
             EngineCmd::Install => grid::engine::install(&config_dir)?,
-            EngineCmd::Start { coordinator, compute, id, poll_ms } => {
+            EngineCmd::Start {
+                coordinator,
+                compute,
+                id,
+                poll_ms,
+            } => {
                 banner::print_mark();
                 println!();
                 let cfg = load_cfg(&config_dir, coordinator, id, None, None, poll_ms)?;
                 std::env::set_var("GRID_CONFIG_DIR", &config_dir);
                 run_engine_host(cfg, compute).await?;
             }
-            EngineCmd::Volume { action } => match action {
-                EngineVolumeCmd::Prepare { name } => {
-                    let volume = grid::engine::prepare_volume(&config_dir, &name).await?;
-                    println!("✓ Engine volume prepared: {}", volume.name);
-                    println!("  key          vault-wrapped (not mounted into containers)");
-                    println!("  backend      {}", volume.backend);
-                    println!("  next         encrypted mount backend must be installed before attach");
+            EngineCmd::Volume { action } => {
+                match action {
+                    EngineVolumeCmd::Prepare { name } => {
+                        let volume = grid::engine::prepare_volume(&config_dir, &name).await?;
+                        println!("✓ Engine volume prepared: {}", volume.name);
+                        println!("  key          vault-wrapped (not mounted into containers)");
+                        println!("  backend      {}", volume.backend);
+                        println!("  next         encrypted mount backend must be installed before attach");
+                    }
+                    EngineVolumeCmd::Status { name } => {
+                        let volume = grid::engine::volume_status(&config_dir, &name)?;
+                        println!("Engine volume: {}", volume.name);
+                        println!("  backend      {}", volume.backend);
+                        println!("  encrypted    {}", volume.encrypted_path);
+                        println!("  mount        {}", volume.mount_path);
+                        println!("  key          vault-wrapped; never printed");
+                    }
                 }
-                EngineVolumeCmd::Status { name } => {
-                    let volume = grid::engine::volume_status(&config_dir, &name)?;
-                    println!("Engine volume: {}", volume.name);
-                    println!("  backend      {}", volume.backend);
-                    println!("  encrypted    {}", volume.encrypted_path);
-                    println!("  mount        {}", volume.mount_path);
-                    println!("  key          vault-wrapped; never printed");
-                }
-            },
+            }
             EngineCmd::Service { action } => match action {
                 EngineServiceCmd::InitWeb { path, name, repo } => {
                     grid::engine::scaffold_web_service(&path, &name, &repo)?;
                     println!("✓ Caddy web-service request written: {}", path.display());
                     println!("  exposure     GRID tunnel only (no direct host port)");
-                    println!("  next         grid engine service check {}", path.display());
+                    println!(
+                        "  next         grid engine service check {}",
+                        path.display()
+                    );
                 }
                 EngineServiceCmd::Check { path } => {
                     let service = grid::engine::load_web_service(&path)?;
                     println!("✓ Valid service request: {}", service.metadata.name);
-                    println!("  image        {} (private registry promotion pins the digest)", service.spec.image);
-                    println!("  git          {}#{}", service.spec.git.repository, service.spec.git.branch);
+                    println!(
+                        "  image        {} (private registry promotion pins the digest)",
+                        service.spec.image
+                    );
+                    println!(
+                        "  git          {}#{}",
+                        service.spec.git.repository, service.spec.git.branch
+                    );
                     println!("  exposure     GRID tunnel only");
                 }
                 EngineServiceCmd::KeyCreate { name, repo } => {
-                    let key = grid::engine::create_service_deploy_key(&config_dir, &name, &repo).await?;
+                    let key =
+                        grid::engine::create_service_deploy_key(&config_dir, &name, &repo).await?;
                     println!("✓ Deploy key created for {}", key.service);
-                    println!("  add this public key as a read-only deploy key on {}:", key.repository);
+                    println!(
+                        "  add this public key as a read-only deploy key on {}:",
+                        key.repository
+                    );
                     println!("  {}", key.public_key);
                     println!("  private key  vault-wrapped; never mounted into a container");
                 }
@@ -1086,7 +1161,10 @@ async fn main() -> Result<()> {
                     println!("  commit       {}", runtime.commit);
                     println!("  image        {}", runtime.image_digest);
                     println!("  public       {}", runtime.public_exposure);
-                    println!("  receipt      {}…", &runtime.receipt_signature[..16.min(runtime.receipt_signature.len())]);
+                    println!(
+                        "  receipt      {}…",
+                        &runtime.receipt_signature[..16.min(runtime.receipt_signature.len())]
+                    );
                 }
                 EngineServiceCmd::Logs { name, follow } => {
                     grid::engine::service_logs(&config_dir, &name, follow)?;
@@ -1111,14 +1189,12 @@ async fn main() -> Result<()> {
                     client_pubkey,
                 } => {
                     let capability =
-                        grid::engine::reveal_private_capability(
-                            &config_dir,
-                            &name,
-                            &client_pubkey,
-                        )
-                        .await?;
+                        grid::engine::reveal_private_capability(&config_dir, &name, &client_pubkey)
+                            .await?;
                     println!("{capability}");
-                    eprintln!("Sensitive: deliver only through an authenticated assigned GRID session.");
+                    eprintln!(
+                        "Sensitive: deliver only through an authenticated assigned GRID session."
+                    );
                 }
                 EngineServiceCmd::Connect {
                     peer,
@@ -1131,11 +1207,9 @@ async fn main() -> Result<()> {
                         None => rpassword::prompt_password("Private GRID capability: ")?,
                     };
                     let cfg = NodeConfig::load(&NodeConfig::path_in(&config_dir))?;
-                    let dek = grid::passkey::require_unlocked(
-                        &config_dir,
-                        "open private Engine tunnel",
-                    )
-                    .await?;
+                    let dek =
+                        grid::passkey::require_unlocked(&config_dir, "open private Engine tunnel")
+                            .await?;
                     let options = PeerOptions {
                         node_id: cfg.node_id.clone(),
                         name: cfg.name.clone(),
@@ -1148,21 +1222,14 @@ async fn main() -> Result<()> {
                         gp_id: None,
                         realm: None,
                         pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
-                        noise_static_key: grid::passkey::p2p_noise_static_key(
-                            &config_dir,
-                            &dek,
-                        )?,
+                        noise_static_key: grid::passkey::p2p_noise_static_key(&config_dir, &dek)?,
                         config_dir: config_dir.clone(),
                     };
-                    let client_pubkey =
-                        grid::passkey::operator_pubkey_hex(&config_dir)?;
+                    let client_pubkey = grid::passkey::operator_pubkey_hex(&config_dir)?;
                     let client_signature = grid::passkey::sign_operator(
                         &config_dir,
                         &dek,
-                        &grid::engine::tunnel_authorization_message(
-                            &name,
-                            capability.trim(),
-                        ),
+                        &grid::engine::tunnel_authorization_message(&name, capability.trim()),
                     )?;
                     run_private_tunnel_client(
                         options,
@@ -1783,6 +1850,35 @@ async fn run_wallet(config_dir: &PathBuf, action: WalletCmd) -> Result<()> {
             println!("✓ receive applied on-chain");
             println!("  balance: {:.6} GRID", chain.balance(&w.address));
         }
+        WalletCmd::Pair { request } => {
+            let request = match request {
+                Some(request) => request,
+                None => {
+                    eprint!("Paste the pairing request shown by ARK: ");
+                    std::io::Write::flush(&mut std::io::stderr())?;
+                    let mut request = String::new();
+                    std::io::stdin().read_line(&mut request)?;
+                    let request = request.trim().to_owned();
+                    if request.is_empty() {
+                        anyhow::bail!("pairing request cannot be empty");
+                    }
+                    request
+                }
+            };
+            let response = grid::arc_pairing::create_pairing_response(config_dir, &request).await?;
+            let code = qrcode::QrCode::new(response.as_bytes())?;
+            println!("Scan this encrypted response with ARK:\n");
+            println!(
+                "{}",
+                code.render::<qrcode::render::unicode::Dense1x2>()
+                    .dark_color(qrcode::render::unicode::Dense1x2::Light)
+                    .light_color(qrcode::render::unicode::Dense1x2::Dark)
+                    .quiet_zone(true)
+                    .build()
+            );
+            println!("\nEncrypted response (safe to copy; expires with the request):");
+            println!("{response}");
+        }
         WalletCmd::History { limit } => {
             print_history(config_dir, limit)?;
         }
@@ -2063,7 +2159,8 @@ async fn run_engine_peer(
     if !connect.iter().any(|peer| peer == DEFAULT_GENESIS_PEER) {
         connect.insert(0, DEFAULT_GENESIS_PEER.to_string());
     }
-    let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted GRID Engine P2P peer").await?;
+    let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted GRID Engine P2P peer")
+        .await?;
     let noise_static_key = grid::passkey::p2p_noise_static_key(&config_dir, &dek)?;
     println!("GRID Engine starts P2P only — host and mine remain off");
     run_peer(PeerOptions {
@@ -2080,7 +2177,8 @@ async fn run_engine_peer(
         pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
         noise_static_key,
         config_dir,
-    }).await
+    })
+    .await
 }
 
 /// The canonical host path used by both `grid host` and `grid engine start`.
@@ -2110,7 +2208,9 @@ async fn run_miner_node(
     }
     let noise_static_key = if let Some(path) = noise_key_file {
         let raw = std::fs::read(&path)?;
-        raw.as_slice().try_into().map_err(|_| anyhow::anyhow!("P2P Noise key must be exactly 32 bytes"))?
+        raw.as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("P2P Noise key must be exactly 32 bytes"))?
     } else {
         let dek = grid::passkey::require_unlocked(&config_dir, "start encrypted P2P miner").await?;
         grid::passkey::p2p_noise_static_key(&config_dir, &dek)?

@@ -30,6 +30,8 @@ pub struct TruthBody {
     pub epoch: u64,
     pub issued_at: String,
     pub genesis_pubkey: String,
+    /// Minimum operator CLI accepted for host, mine, and node participation.
+    pub minimum_cli_version: String,
     pub tracked: Vec<TrackedPeer>,
     pub banned: Vec<BanRecord>,
 }
@@ -94,6 +96,7 @@ mod tests {
             epoch: 1,
             issued_at: "t".into(),
             genesis_pubkey: String::new(),
+            minimum_cli_version: "0.2.24".into(),
             tracked: vec![],
             banned: vec![BanRecord {
                 peer_id: "evil".into(),
@@ -116,6 +119,7 @@ mod tests {
             epoch: 1,
             issued_at: "t".into(),
             genesis_pubkey: String::new(),
+            minimum_cli_version: "0.2.24".into(),
             tracked: vec![],
             banned: vec![],
         };

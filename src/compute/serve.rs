@@ -193,9 +193,8 @@ mod tests {
             r#"{"image":"alpine:3.20","network":true,"tunnel":true,"servicePort":8080}"#,
         );
         assert!(arbitrary.is_err());
-        let no_network = ContainerJobSpec::parse(
-            r#"{"image":"alpine:3.20","tunnel":true,"servicePort":41783}"#,
-        );
+        let no_network =
+            ContainerJobSpec::parse(r#"{"image":"alpine:3.20","tunnel":true,"servicePort":41783}"#);
         assert!(no_network.is_err());
     }
 }

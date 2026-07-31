@@ -60,6 +60,7 @@ impl GenesisStore {
             epoch: self.raw.epoch,
             issued_at: Utc::now().to_rfc3339(),
             genesis_pubkey: String::new(),
+            minimum_cli_version: crate::version_gate::configured_minimum(),
             tracked: self.raw.tracked.clone(),
             banned: self.raw.banned.clone(),
         };

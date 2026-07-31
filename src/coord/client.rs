@@ -56,8 +56,10 @@ impl CoordinatorClient {
         }
         if let Some(metrics) = metrics {
             let gpu_count = if gpu_model.trim().is_empty()
-                || matches!(gpu_model.trim().to_ascii_lowercase().as_str(), "cpu" | "none" | "n/a")
-            {
+                || matches!(
+                    gpu_model.trim().to_ascii_lowercase().as_str(),
+                    "cpu" | "none" | "n/a"
+                ) {
                 0
             } else {
                 gpu_model
@@ -100,7 +102,11 @@ impl CoordinatorClient {
 
     /// `track`: `host` | `mine` | `both`
     pub async fn claim_track(&self, node_id: &str, track: &str) -> Result<Option<Job>> {
-        let body = serde_json::json!({ "nodeId": node_id, "track": track });
+        let body = serde_json::json!({
+            "nodeId": node_id,
+            "track": track,
+            "cliVersion": crate::version_gate::CURRENT_CLI_VERSION,
+        });
         let res = self
             .http
             .post(format!("{}/v1/nodes/claim", self.base))
