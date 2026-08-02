@@ -416,6 +416,25 @@ async fn network_snapshot(config_dir: &Path) -> NetworkSnapshot {
         .pointer("/chain/leaderPubkey")
         .and_then(|value| value.as_str())
         .map(str::to_string);
+    if settings.mode != "genesis" {
+        let role = body.get("role").and_then(|value| value.as_str());
+        let advertised_peer = body.pointer("/p2p/listen").and_then(|value| value.as_str());
+        if role != Some("node") || advertised_peer.is_none() {
+            snapshot.error =
+                Some("Endpoint is healthy, but it is not a GRID P2P node wallet API".into());
+            snapshot.connected = false;
+            return snapshot;
+        }
+        if peer_port(advertised_peer.unwrap()) != peer_port(&settings.p2p_peer) {
+            snapshot.error = Some(format!(
+                "Node advertises P2P {}, but Phoenix is configured for {}",
+                advertised_peer.unwrap(),
+                settings.p2p_peer
+            ));
+            snapshot.connected = false;
+            return snapshot;
+        }
+    }
     snapshot.trusted = if settings.mode == "genesis" {
         snapshot.leader_pubkey.as_deref() == Some(crate::genesis::CANONICAL_LEADER_PUBKEY)
     } else {
@@ -438,13 +457,22 @@ fn validate_network_endpoint(truth_url: &str, p2p_peer: &str) -> Result<()> {
     {
         bail!("Genesis truth endpoint must be an http(s) URL without credentials");
     }
-    let (host, port) = p2p_peer
-        .rsplit_once(':')
-        .ok_or_else(|| anyhow::anyhow!("P2P peer must be host:port"))?;
-    if host.trim().is_empty() || port.parse::<u16>().is_err() {
+    if peer_port(p2p_peer).is_none() {
         bail!("P2P peer must be host:port");
     }
     Ok(())
+}
+
+fn peer_port(peer: &str) -> Option<u16> {
+    let normalized = peer.trim().trim_start_matches("tcp://");
+    if let Ok(address) = normalized.parse::<std::net::SocketAddr>() {
+        return Some(address.port());
+    }
+    let (host, port) = normalized.rsplit_once(':')?;
+    if host.trim().is_empty() {
+        return None;
+    }
+    port.parse().ok()
 }
 
 fn ensure_unlocked(config_dir: &Path) -> Result<()> {

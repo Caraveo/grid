@@ -28,6 +28,21 @@ use crate::blockchain::ChainReplica;
 pub const MAX_SUPPLY: f64 = 10_000_000_000.0;
 /// Lifetime ceiling for verified compute rewards. Treasury GRID is separate.
 pub const COMPUTE_ALLOCATION: f64 = 5_000_000_000.0;
+/// Fixed treasury allocation, separately bounded from compute emission.
+pub const TREASURY_ALLOCATION: f64 = 5_000_000_000.0;
+/// Native denomination used by GRID Exchange and future integer-only protocol state.
+/// GRID accounting is expressed directly in whole Chips. There is no
+/// additional billion-times display multiplier.
+pub const CHIPS_PER_GRID: u128 = 1;
+/// Treasury bucket reserved for GRID Exchange inventory and market operations.
+pub const EXCHANGE_RESERVE_ALLOCATION: f64 = 1_000_000_000.0;
+pub const DEVELOPMENT_ALLOCATION: f64 = 1_100_000_000.0;
+pub const SECURITY_ALLOCATION: f64 = 550_000_000.0;
+pub const COMMUNITY_LAUNCH_ALLOCATION: f64 = 550_000_000.0;
+pub const LIQUIDITY_ALLOCATION: f64 = 550_000_000.0;
+pub const FOUNDER_ALLOCATION: f64 = 500_000_000.0;
+pub const CONTRIBUTOR_ALLOCATION: f64 = 500_000_000.0;
+pub const EMERGENCY_ALLOCATION: f64 = 250_000_000.0;
 /// Unclaimed mint older than this is burned by protocol.
 pub const BURN_DEADLINE_DAYS: i64 = 365;
 /// Maximum newly-issued GRID per one-hour protocol epoch until governance

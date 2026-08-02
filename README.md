@@ -114,6 +114,19 @@ grid node
 
 By default, peer-bearing commands dial the canonical Genesis peer and listen on TCP `9900`. Outbound-only operation works; forwarding TCP `9900` makes a node more useful to the mesh. Use `--no-genesis` / `--p2p-no-genesis` only when operating the Genesis side or an isolated test network.
 
+`grid node` also exposes a read-only Phoenix wallet API on
+`127.0.0.1:9100`. Phoenix's **Local node** mode uses that endpoint and P2P
+`127.0.0.1:9900`. To allow Phoenix on another trusted machine to connect, bind
+the API explicitly and advertise/forward the P2P listener:
+
+```bash
+grid node --p2p-listen 0.0.0.0:9900 --wallet-bind 0.0.0.0:9100
+```
+
+Then choose **Custom node** in Phoenix with `http://NODE_HOST:9100` and
+`NODE_HOST:9900`. Restrict TCP `9100` and `9900` with the host/network firewall;
+the wallet API is read-only, while P2P traffic is Noise encrypted.
+
 For the concise operator guide, see [grid-compute.com/quick](https://grid-compute.com/quick).
 
 ## Operator basics

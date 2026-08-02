@@ -20,6 +20,7 @@ pub mod crypto;
 pub mod earn;
 pub mod ember;
 pub mod engine;
+pub mod exchange;
 pub mod executor;
 pub mod wallet;
 
@@ -30,6 +31,7 @@ pub mod gp;
 pub mod gui;
 pub mod mesh_ping;
 pub mod node;
+pub mod node_api;
 pub mod p2p;
 pub mod passkey;
 pub mod por;

@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::chain::{ChainState, ChainTx, MAX_SUPPLY};
 use crate::crypto::blake3_hex;
+use crate::exchange::{ExchangeStateV1, SignedExchangeIntent};
 use crate::genesis::GenesisKeys;
 use crate::por::{allocate_inclusion, allocate_proportional, split_emission, NodeScore};
 
@@ -34,7 +35,11 @@ pub struct Block {
     pub timestamp: String,
     pub leader_pubkey: String,
     pub state_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exchange_state_root: Option<String>,
     pub transactions: Vec<ChainTx>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exchange_transitions: Vec<SignedExchangeIntent>,
     #[serde(default)]
     pub settlements: Vec<Settlement>,
     pub signature: String,
@@ -402,6 +407,29 @@ impl ChainReplica {
         Ok(b)
     }
 
+    pub fn append_exchange_block(
+        &mut self,
+        keys: &GenesisKeys,
+        state: &ChainState,
+        exchange_state: &ExchangeStateV1,
+        transitions: Vec<SignedExchangeIntent>,
+    ) -> Result<Block> {
+        if keys.public_hex() != self.leader_pubkey {
+            bail!("only configured leader may propose blocks");
+        }
+        let block = signed_block_with_exchange(
+            keys,
+            &self.chain_id,
+            self.tip().height + 1,
+            &block_hash(self.tip())?,
+            state,
+            exchange_state,
+            transitions,
+        )?;
+        self.apply_replica_block(block.clone())?;
+        Ok(block)
+    }
+
     pub fn apply_replica_block(&mut self, block: Block) -> Result<()> {
         if block.chain_id != self.chain_id || block.leader_pubkey != self.leader_pubkey {
             bail!("wrong chain trust anchor");
@@ -411,6 +439,30 @@ impl ChainReplica {
             bail!("block does not extend current tip");
         }
         verify_block(&block)?;
+
+        // A valid leader signature is not sufficient: independently replay the
+        // exchange transitions before accepting the block into the local tip.
+        let mut exchange_state = ExchangeStateV1::default();
+        for committed in &self.blocks {
+            for transition in &committed.exchange_transitions {
+                exchange_state.apply_committed(transition, &self.chain_id)?;
+            }
+        }
+        for transition in &block.exchange_transitions {
+            exchange_state.apply_committed(transition, &self.chain_id)?;
+        }
+        match &block.exchange_state_root {
+            Some(expected_root) if exchange_state.state_root()? != *expected_root => {
+                bail!("invalid exchange state root at height {}", block.height);
+            }
+            None if !block.exchange_transitions.is_empty() => {
+                bail!(
+                    "exchange transitions missing state root at height {}",
+                    block.height
+                );
+            }
+            _ => {}
+        }
         self.blocks.push(block);
         Ok(())
     }
@@ -420,6 +472,7 @@ impl ChainReplica {
             bail!("missing genesis block");
         }
         let mut expected_prev = String::new();
+        let mut exchange_state = ExchangeStateV1::default();
         for (i, b) in self.blocks.iter().enumerate() {
             if b.chain_id != self.chain_id
                 || b.leader_pubkey != self.leader_pubkey
@@ -429,9 +482,32 @@ impl ChainReplica {
                 bail!("invalid block linkage at height {i}");
             }
             verify_block(b)?;
+            for transition in &b.exchange_transitions {
+                exchange_state.apply_committed(transition, &self.chain_id)?;
+            }
+            if let Some(expected_root) = &b.exchange_state_root {
+                if exchange_state.state_root()? != *expected_root {
+                    bail!("invalid exchange state root at height {i}");
+                }
+            } else if !b.exchange_transitions.is_empty() {
+                bail!("exchange transitions missing state root at height {i}");
+            }
             expected_prev = block_hash(b)?;
         }
         Ok(())
+    }
+
+    /// Reconstruct the authoritative exchange state exclusively from signed,
+    /// linked blocks. The JSON exchange-state file is only an optional cache.
+    pub fn exchange_state(&self) -> Result<ExchangeStateV1> {
+        self.verify()?;
+        let mut exchange_state = ExchangeStateV1::default();
+        for block in &self.blocks {
+            for transition in &block.exchange_transitions {
+                exchange_state.apply_committed(transition, &self.chain_id)?;
+            }
+        }
+        Ok(exchange_state)
     }
 }
 
@@ -469,12 +545,41 @@ fn signed_block(
         timestamp: Utc::now().to_rfc3339(),
         leader_pubkey: keys.public_hex(),
         state_root: state_root(state)?,
+        exchange_state_root: None,
         transactions,
+        exchange_transitions: vec![],
         settlements,
         signature: String::new(),
     };
     b.signature = keys.sign(&signing_bytes(&b)?);
     Ok(b)
+}
+
+fn signed_block_with_exchange(
+    keys: &GenesisKeys,
+    chain_id: &str,
+    height: u64,
+    previous_hash: &str,
+    state: &ChainState,
+    exchange_state: &ExchangeStateV1,
+    exchange_transitions: Vec<SignedExchangeIntent>,
+) -> Result<Block> {
+    let mut block = Block {
+        version: 2,
+        chain_id: chain_id.into(),
+        height,
+        previous_hash: previous_hash.into(),
+        timestamp: Utc::now().to_rfc3339(),
+        leader_pubkey: keys.public_hex(),
+        state_root: state_root(state)?,
+        exchange_state_root: Some(exchange_state.state_root()?),
+        transactions: vec![],
+        exchange_transitions,
+        settlements: vec![],
+        signature: String::new(),
+    };
+    block.signature = keys.sign(&signing_bytes(&block)?);
+    Ok(block)
 }
 
 pub fn verify_block(block: &Block) -> Result<()> {
@@ -498,8 +603,44 @@ pub fn verify_block(block: &Block) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exchange::{
+        exchange_signing_bytes, ExchangeIntent, ExchangeTransition, SignedExchangeIntent,
+    };
     use crate::genesis::generate_keypair;
+    use chrono::Utc;
+    use ed25519_dalek::{Signer, SigningKey};
     use tempfile::tempdir;
+
+    fn signed_exchange_deposit(signer: &SigningKey, chain_id: &str) -> SignedExchangeIntent {
+        let public_key = hex::encode(signer.verifying_key().to_bytes());
+        let intent = ExchangeIntent {
+            version: 1,
+            chain_id: chain_id.into(),
+            transition_id: "exchange-deposit-1".into(),
+            sequence: 1,
+            actor: public_key.clone(),
+            actor_nonce: 1,
+            expires_at: Utc::now().timestamp() + 120,
+            transition: ExchangeTransition::DepositCredit {
+                event_id: "grid:deposit:1".into(),
+                account_id: "gex-user-1".into(),
+                asset: "GRID".into(),
+                amount_atomic: "1000000000".into(),
+                native_tx_id: "grid-native-tx-1".into(),
+            },
+        };
+        let signature = hex::encode(
+            signer
+                .sign(&exchange_signing_bytes(&intent).unwrap())
+                .to_bytes(),
+        );
+        SignedExchangeIntent {
+            intent,
+            public_key,
+            signature,
+        }
+    }
+
     #[test]
     fn signed_chain_rejects_tamper() {
         let d = tempdir().unwrap();
@@ -510,6 +651,52 @@ mod tests {
         assert!(r.verify().is_ok());
         r.blocks[1].height = 7;
         assert!(r.verify().is_err());
+    }
+
+    #[test]
+    fn replica_replays_exchange_root_before_accepting_block() {
+        let d = tempdir().unwrap();
+        let leader = generate_keypair(d.path()).unwrap();
+        let sequencer = SigningKey::from_bytes(&[31u8; 32]);
+        let mut replica = ChainReplica::create_genesis(&leader, vec![]).unwrap();
+        let transition = signed_exchange_deposit(&sequencer, &replica.chain_id);
+        let mut exchange = ExchangeStateV1::default();
+        exchange
+            .apply_signed(&transition, &replica.chain_id)
+            .unwrap();
+
+        replica
+            .append_exchange_block(
+                &leader,
+                &ChainState::default(),
+                &exchange,
+                vec![transition.clone()],
+            )
+            .unwrap();
+        assert_eq!(
+            replica.tip().exchange_state_root,
+            Some(exchange.state_root().unwrap())
+        );
+        replica.verify().unwrap();
+        let replayed = replica.exchange_state().unwrap();
+        assert_eq!(replayed, exchange);
+
+        let mut follower = ChainReplica::create_genesis(&leader, vec![]).unwrap();
+        let mut bad = signed_block_with_exchange(
+            &leader,
+            &follower.chain_id,
+            1,
+            &block_hash(follower.tip()).unwrap(),
+            &ChainState::default(),
+            &ExchangeStateV1::default(),
+            vec![transition],
+        )
+        .unwrap();
+        // The block remains correctly leader-signed, but its root does not
+        // represent the included deposit transition.
+        bad.signature = leader.sign(&signing_bytes(&bad).unwrap());
+        assert!(follower.apply_replica_block(bad).is_err());
+        assert_eq!(follower.tip().height, 0);
     }
 
     #[test]

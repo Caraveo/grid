@@ -198,6 +198,9 @@ enum Commands {
         /// Dedicated mode-0600 Noise key for a non-interactive node service
         #[arg(long)]
         p2p_noise_key_file: Option<PathBuf>,
+        /// Read-only wallet/status API bind (use 0.0.0.0:9100 for remote wallets)
+        #[arg(long, default_value = "127.0.0.1:9100")]
+        wallet_bind: String,
     },
 
     /// Alias for `grid node` (P2P peer + host + mine)
@@ -312,6 +315,12 @@ enum Commands {
     Genesis {
         #[command(subcommand)]
         action: GenesisCmd,
+    },
+
+    /// Inspect the authoritative GRID Exchange ledger
+    Exchange {
+        #[command(subcommand)]
+        action: ExchangeCmd,
     },
 
     /// Protect operator keys (default: passkey). See `grid auth --help`
@@ -780,6 +789,22 @@ enum GenesisCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ExchangeCmd {
+    /// Show signed-block exchange height, sequence, root, and liabilities summary
+    Status {
+        #[arg(
+            long,
+            env = "GRID_GENESIS",
+            default_value = "https://genesis.grid-compute.com"
+        )]
+        genesis: String,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load operator env early (before clap reads env= attrs for subcommands that re-parse).
@@ -1014,6 +1039,7 @@ async fn main() -> Result<()> {
             p2p_connect,
             p2p_no_genesis,
             p2p_noise_key_file,
+            wallet_bind,
         } => {
             banner::print_mark();
             println!();
@@ -1027,6 +1053,7 @@ async fn main() -> Result<()> {
                 p2p_connect,
                 p2p_no_genesis,
                 p2p_noise_key_file,
+                wallet_bind,
             )
             .await?;
         }
@@ -1073,6 +1100,7 @@ async fn main() -> Result<()> {
                 Vec::new(),
                 false,
                 None,
+                "127.0.0.1:9100".into(),
             )
             .await?;
         }
@@ -1465,6 +1493,10 @@ async fn main() -> Result<()> {
 
         Commands::Genesis { action } => {
             run_genesis(&config_dir, action).await?;
+        }
+
+        Commands::Exchange { action } => {
+            run_exchange(action).await?;
         }
 
         Commands::Auth { action } => {
@@ -2114,6 +2146,66 @@ async fn run_genesis(config_dir: &PathBuf, action: GenesisCmd) -> Result<()> {
     Ok(())
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangeStatus {
+    version: u32,
+    sequence: u64,
+    state_root: String,
+    accounts: usize,
+    open_orders: usize,
+    chain_height: Option<u64>,
+    assets: Vec<String>,
+    chips_per_grid: String,
+}
+
+async fn run_exchange(action: ExchangeCmd) -> Result<()> {
+    match action {
+        ExchangeCmd::Status { genesis, json } => {
+            let url = format!("{}/v1/exchange/status", genesis.trim_end_matches('/'));
+            let status = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()?
+                .get(url)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<ExchangeStatus>()
+                .await?;
+            if status.version != 1
+                || status.state_root.len() != 64
+                || !status
+                    .state_root
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || status.chips_per_grid != "1"
+            {
+                anyhow::bail!("Genesis returned an invalid exchange ledger summary");
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("GRID Exchange authoritative ledger");
+                println!(
+                    "  height       {}",
+                    status
+                        .chain_height
+                        .map(|height| height.to_string())
+                        .unwrap_or_else(|| "not initialized".into())
+                );
+                println!("  sequence     {}", status.sequence);
+                println!("  state root   {}", status.state_root);
+                println!("  accounts     {}", status.accounts);
+                println!("  open orders  {}", status.open_orders);
+                println!("  assets       {}", status.assets.join(", "));
+                println!("  denomination whole Chips (1:1 ledger units)");
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Load `config_dir/env` (and `~/.grid/env` fallback) into process env.
 /// Does not override variables already set in the shell. Never prints secrets.
 fn load_operator_env(config_dir: &std::path::Path) {
@@ -2244,6 +2336,7 @@ async fn run_combined_node(
     mut connect: Vec<String>,
     no_genesis: bool,
     noise_key_file: Option<PathBuf>,
+    wallet_bind: String,
 ) -> Result<()> {
     if !no_genesis && !connect.iter().any(|peer| peer == DEFAULT_GENESIS_PEER) {
         connect.insert(0, DEFAULT_GENESIS_PEER.to_string());
@@ -2259,6 +2352,8 @@ async fn run_combined_node(
         grid::passkey::p2p_noise_static_key(&config_dir, &dek)?
     };
 
+    let p2p_listen = listen.clone();
+    let peer_node_id = cfg.node_id.clone();
     let peer = PeerOptions {
         node_id: cfg.node_id.clone(),
         name: cfg.name.clone(),
@@ -2272,13 +2367,19 @@ async fn run_combined_node(
         realm: None,
         pubkey_hex: grid::passkey::operator_pubkey_hex(&config_dir).ok(),
         noise_static_key,
-        config_dir,
+        config_dir: config_dir.clone(),
     };
 
     println!("GRID NODE includes P2P peer + host + mine");
     tokio::select! {
         result = run_peer(peer) => result,
         result = run_node(cfg) => result,
+        result = grid::node_api::serve(
+            config_dir,
+            peer_node_id,
+            p2p_listen,
+            wallet_bind,
+        ) => result,
     }
 }
 

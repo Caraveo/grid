@@ -80,7 +80,12 @@ pub async fn run_peer(opts: PeerOptions) -> Result<()> {
 
     // Initial + periodic genesis truth pull (ban list)
     if let Some(ref gurl) = opts.genesis_url {
-        refresh_truth(gurl, opts.genesis_pubkey.as_deref(), &state).await?;
+        if let Err(error) = refresh_truth(gurl, opts.genesis_pubkey.as_deref(), &state).await {
+            warn!("initial genesis truth unavailable: {error}");
+            println!(
+                "[p2p] warning: Genesis truth unavailable; listening continues and policy refresh will retry"
+            );
+        }
         let gurl = gurl.clone();
         let gpk = opts.genesis_pubkey.clone();
         let state_t = state.clone();

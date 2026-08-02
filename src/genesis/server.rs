@@ -16,6 +16,7 @@ use tower_http::cors::CorsLayer;
 use crate::arc_protocol::{validate_signed_send, SignedArcSend};
 use crate::blockchain::{block_hash, ChainReplica};
 use crate::chain::ChainState;
+use crate::exchange::{ExchangeStateV1, SignedExchangeIntent};
 
 use super::keys::GenesisKeys;
 use super::store::GenesisStore;
@@ -52,6 +53,11 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
         .route("/v1/wallet/:address", get(wallet_handler))
         .route("/v1/wallet/:address/nonce", get(wallet_nonce_handler))
         .route("/v1/transactions", post(transaction_handler))
+        .route("/v1/exchange/status", get(exchange_status_handler))
+        .route(
+            "/v1/exchange/transitions",
+            post(exchange_transition_handler),
+        )
         // Announce is a *request to be noticed* — does NOT auto-track or ban.
         // Genesis operator still must `grid genesis track` locally.
         .route("/v1/announce", post(announce_handler))
@@ -80,12 +86,88 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
     println!("  GET  /v1/wallet/:address  public balance + activity");
     println!("  GET  /v1/wallet/:address/nonce  next anti-replay nonce");
     println!("  POST /v1/transactions  verify + commit signed ARK transfer");
+    println!("  GET  /v1/exchange/status  authoritative exchange state summary");
+    println!("  POST /v1/exchange/transitions  verify + commit exchange transition");
     println!("  POST /v1/announce  peer self-report (not trusted for bans)");
     println!();
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn exchange_status_handler(
+    State(app): State<Arc<App>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let replica =
+        ChainReplica::load(&app.config_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let state = match &replica {
+        Some(chain) => chain
+            .exchange_state()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        None => ExchangeStateV1::default(),
+    };
+    Ok(Json(serde_json::json!({
+        "version": state.version,
+        "sequence": state.sequence,
+        "stateRoot": state.state_root().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        "accounts": state.balances.len(),
+        "openOrders": state.orders.values().filter(|order| order.status == "open").count(),
+        "chainHeight": replica.as_ref().map(|chain| chain.tip().height),
+        "assets": ["GRID", "BTC", "ETH", "SOL", "USDC"],
+        "chipsPerGrid": crate::chain::CHIPS_PER_GRID.to_string(),
+    })))
+}
+
+async fn exchange_transition_handler(
+    State(app): State<Arc<App>>,
+    Json(envelope): Json<SignedExchangeIntent>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let configured = std::env::var("GRID_EXCHANGE_SEQUENCER_PUBKEY").map_err(|_| {
+        api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "exchange sequencer is not configured",
+        )
+    })?;
+    if envelope.public_key != configured {
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "exchange transition signer is not authorized",
+        ));
+    }
+    let _guard = app.transition_lock.lock().await;
+    let native_state = ChainState::load(&app.config_dir).map_err(internal_error)?;
+    let mut replica = ChainReplica::load(&app.config_dir)
+        .map_err(internal_error)?
+        .ok_or_else(|| api_error(StatusCode::SERVICE_UNAVAILABLE, "chain is not initialized"))?;
+    // Signed GRID blocks are the source of truth. Rebuild the current exchange
+    // state from the replica instead of trusting a separately persisted file.
+    let mut next_exchange = replica.exchange_state().map_err(internal_error)?;
+    next_exchange
+        .apply_signed(&envelope, &replica.chain_id)
+        .map_err(bad_request)?;
+    let block = replica
+        .append_exchange_block(
+            &app.keys,
+            &native_state,
+            &next_exchange,
+            vec![envelope.clone()],
+        )
+        .map_err(internal_error)?;
+    replica.save(&app.config_dir).map_err(internal_error)?;
+    // Best-effort local cache for operator inspection. A cache write can never
+    // decide whether an already-persisted signed block was committed.
+    if let Err(error) = next_exchange.save(&app.config_dir) {
+        eprintln!("exchange state cache write failed: {error}");
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "transitionId": envelope.intent.transition_id,
+        "sequence": next_exchange.sequence,
+        "exchangeStateRoot": next_exchange.state_root().map_err(internal_error)?,
+        "height": block.height,
+        "blockHash": block_hash(&block).unwrap_or_default(),
+    })))
 }
 
 async fn wallet_handler(
