@@ -1,0 +1,12 @@
+/src/target-linux/release/deps/rtoolbox-6caf07aa4947dd82.d: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/atty.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/fix_line_issues.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/print_tty.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_string.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_vec.rs
+
+/src/target-linux/release/deps/librtoolbox-6caf07aa4947dd82.rlib: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/atty.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/fix_line_issues.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/print_tty.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_string.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_vec.rs
+
+/src/target-linux/release/deps/librtoolbox-6caf07aa4947dd82.rmeta: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/atty.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/fix_line_issues.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/print_tty.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_string.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_vec.rs
+
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/lib.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/atty.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/fix_line_issues.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/print_tty.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_string.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rtoolbox-0.0.5/src/safe_vec.rs:
