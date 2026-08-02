@@ -133,7 +133,11 @@ impl WalletNetworkSettings {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action", rename_all = "camelCase")]
+#[serde(
+    tag = "action",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum WalletAction {
     SetupKeyphrase,
     SetupPassword {
@@ -514,5 +518,29 @@ mod tests {
             normalize_truth_url("https://node.example"),
             "https://node.example"
         );
+    }
+
+    #[test]
+    fn wallet_action_accepts_camel_case_custom_node_fields() {
+        let action: WalletAction = serde_json::from_value(serde_json::json!({
+            "action": "setNetwork",
+            "mode": "custom",
+            "truthUrl": "127.0.0.1:9100",
+            "p2pPeer": "127.0.0.1:9900"
+        }))
+        .expect("Phoenix custom-node action should deserialize");
+
+        match action {
+            WalletAction::SetNetwork {
+                mode,
+                truth_url,
+                p2p_peer,
+            } => {
+                assert_eq!(mode, "custom");
+                assert_eq!(truth_url.as_deref(), Some("127.0.0.1:9100"));
+                assert_eq!(p2p_peer.as_deref(), Some("127.0.0.1:9900"));
+            }
+            _ => panic!("expected setNetwork action"),
+        }
     }
 }
