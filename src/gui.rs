@@ -334,8 +334,8 @@ pub async fn act(config_dir: &Path, action: WalletAction) -> Result<ActionResult
                 },
                 "custom" => WalletNetworkSettings {
                     mode,
-                    truth_url: truth_url.unwrap_or_default(),
-                    p2p_peer: p2p_peer.unwrap_or_default(),
+                    truth_url: normalize_truth_url(&truth_url.unwrap_or_default()),
+                    p2p_peer: p2p_peer.unwrap_or_default().trim().to_string(),
                 },
                 _ => bail!("network mode must be genesis, local, or custom"),
             };
@@ -463,6 +463,15 @@ fn validate_network_endpoint(truth_url: &str, p2p_peer: &str) -> Result<()> {
     Ok(())
 }
 
+fn normalize_truth_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    }
+}
+
 fn peer_port(peer: &str) -> Option<u16> {
     let normalized = peer.trim().trim_start_matches("tcp://");
     if let Ok(address) = normalized.parse::<std::net::SocketAddr>() {
@@ -481,4 +490,29 @@ fn ensure_unlocked(config_dir: &Path) -> Result<()> {
         bail!("vault is locked; unlock it in the wallet first");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_node_url_adds_http_base() {
+        assert_eq!(
+            normalize_truth_url("127.0.0.1:9100"),
+            "http://127.0.0.1:9100"
+        );
+        assert_eq!(
+            normalize_truth_url(" node.example:9100 "),
+            "http://node.example:9100"
+        );
+    }
+
+    #[test]
+    fn custom_node_url_preserves_explicit_scheme() {
+        assert_eq!(
+            normalize_truth_url("https://node.example"),
+            "https://node.example"
+        );
+    }
 }
