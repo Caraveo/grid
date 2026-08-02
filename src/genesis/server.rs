@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
-use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -54,6 +54,10 @@ pub async fn run_genesis_server(config_dir: PathBuf, bind: &str, keys: GenesisKe
         .route("/v1/wallet/:address/nonce", get(wallet_nonce_handler))
         .route("/v1/transactions", post(transaction_handler))
         .route("/v1/exchange/status", get(exchange_status_handler))
+        .route(
+            "/v1/exchange/accounts/:account_id",
+            get(exchange_account_handler),
+        )
         .route(
             "/v1/exchange/transitions",
             post(exchange_transition_handler),
@@ -114,7 +118,52 @@ async fn exchange_status_handler(
         "accounts": state.balances.len(),
         "openOrders": state.orders.values().filter(|order| order.status == "open").count(),
         "chainHeight": replica.as_ref().map(|chain| chain.tip().height),
-        "assets": ["GRID", "BTC", "ETH", "SOL", "USDC"],
+        "assets": ["CHIP", "GRID", "BTC", "ETH", "SOL", "USDC"],
+        "chipsPerGrid": crate::chain::CHIPS_PER_GRID.to_string(),
+    })))
+}
+
+async fn exchange_account_handler(
+    State(app): State<Arc<App>>,
+    AxumPath(account_id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let expected =
+        std::env::var("GRID_EXCHANGE_READ_TOKEN").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let authorized = !expected.is_empty()
+        && headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            == Some(format!("Bearer {expected}").as_str());
+    if !authorized {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if uuid::Uuid::parse_str(&account_id).is_err() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let replica =
+        ChainReplica::load(&app.config_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let state = match &replica {
+        Some(chain) => chain
+            .exchange_state()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        None => ExchangeStateV1::default(),
+    };
+    let balances = state.balances.get(&account_id).cloned().unwrap_or_default();
+    let orders = state
+        .orders
+        .values()
+        .filter(|order| order.owner == account_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({
+        "version": state.version,
+        "accountId": account_id,
+        "sequence": state.sequence,
+        "stateRoot": state.state_root().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        "chainHeight": replica.as_ref().map(|chain| chain.tip().height),
+        "balances": balances,
+        "orders": orders,
         "chipsPerGrid": crate::chain::CHIPS_PER_GRID.to_string(),
     })))
 }

@@ -85,6 +85,12 @@ pub enum ExchangeTransition {
         taker_fee_asset: String,
         taker_fee_atomic: String,
     },
+    ChipConvert {
+        account_id: String,
+        from_asset: String,
+        to_asset: String,
+        amount_atomic: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -363,6 +369,21 @@ impl ExchangeStateV1 {
                     taker_fee,
                 )?;
             }
+            ExchangeTransition::ChipConvert {
+                account_id,
+                from_asset,
+                to_asset,
+                amount_atomic,
+            } => {
+                let amount = atomic(amount_atomic)?;
+                let valid_pair = (from_asset == "GRID" && to_asset == "CHIP")
+                    || (from_asset == "CHIP" && to_asset == "GRID");
+                if !valid_pair {
+                    bail!("CHIP conversion must be between CHIP and GRID");
+                }
+                self.debit_available(account_id, from_asset, amount)?;
+                self.credit_available(account_id, to_asset, amount)?;
+            }
         }
 
         self.sequence = intent.sequence;
@@ -495,6 +516,16 @@ impl ExchangeStateV1 {
         Ok(())
     }
 
+    fn debit_available(&mut self, account: &str, asset: &str, amount: u128) -> Result<()> {
+        let balance = self.balance_mut(account, asset)?;
+        let available = atomic_allow_zero(&balance.available_atomic)?;
+        if amount > available {
+            bail!("insufficient available balance");
+        }
+        balance.available_atomic = (available - amount).to_string();
+        Ok(())
+    }
+
     fn move_held_to_available(&mut self, account: &str, asset: &str, amount: u128) -> Result<()> {
         self.debit_held(account, asset, amount)?;
         self.credit_available(account, asset, amount)
@@ -537,7 +568,7 @@ fn validate_identifier(value: &str, field: &str) -> Result<()> {
 }
 
 fn validate_asset(asset: &str) -> Result<()> {
-    if !matches!(asset, "GRID" | "BTC" | "ETH" | "SOL" | "USDC") {
+    if !matches!(asset, "CHIP" | "GRID" | "BTC" | "ETH" | "SOL" | "USDC") {
         bail!("unsupported exchange asset");
     }
     Ok(())
@@ -765,5 +796,51 @@ mod tests {
         assert_eq!(state.fees["USDC"], "2");
         assert_eq!(state.orders["sell-grid"].status, "filled");
         assert_eq!(state.orders["buy-grid"].status, "filled");
+    }
+
+    #[test]
+    fn chip_grid_conversion_is_exact_and_reversible() {
+        let secret = SigningKey::from_bytes(&[24u8; 32]);
+        let mut state = ExchangeStateV1::default();
+        let transitions = [
+            ExchangeTransition::DepositCredit {
+                event_id: "grid:deposit:converter".into(),
+                account_id: "converter".into(),
+                asset: "GRID".into(),
+                amount_atomic: "100".into(),
+                native_tx_id: "grid-native-convert".into(),
+            },
+            ExchangeTransition::ChipConvert {
+                account_id: "converter".into(),
+                from_asset: "GRID".into(),
+                to_asset: "CHIP".into(),
+                amount_atomic: "40".into(),
+            },
+            ExchangeTransition::ChipConvert {
+                account_id: "converter".into(),
+                from_asset: "CHIP".into(),
+                to_asset: "GRID".into(),
+                amount_atomic: "10".into(),
+            },
+        ];
+
+        for (index, transition) in transitions.into_iter().enumerate() {
+            let sequence = index as u64 + 1;
+            state
+                .apply_signed(
+                    &signed(&secret, sequence, sequence, transition),
+                    "grid-test",
+                )
+                .unwrap();
+        }
+
+        assert_eq!(state.balances["converter"]["GRID"].available_atomic, "70");
+        assert_eq!(state.balances["converter"]["CHIP"].available_atomic, "30");
+        assert_eq!(
+            atomic_allow_zero(&state.balances["converter"]["GRID"].available_atomic).unwrap()
+                + atomic_allow_zero(&state.balances["converter"]["CHIP"].available_atomic,)
+                    .unwrap(),
+            100,
+        );
     }
 }
